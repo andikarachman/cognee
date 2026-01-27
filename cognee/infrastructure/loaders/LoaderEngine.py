@@ -28,8 +28,11 @@ class LoaderEngine:
 
         self.default_loader_priority = [
             "text_loader",
-            "pypdf_loader",
-            "image_loader",
+            "pdfplumber_loader",  # Try digital PDF first (fastest, with layout)
+            "ocr_pdf_loader",  # Detects type, falls back to pdfplumber if digital
+            "pypdf_loader",  # Fallback if no pdfplumber/OCR
+            "ocr_image_loader",  # Try OCR for images first
+            "image_loader",  # Fallback to LLM vision
             "audio_loader",
             "csv_loader",
             "unstructured_loader",

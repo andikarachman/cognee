@@ -34,3 +34,17 @@ try:
     __all__.append("BeautifulSoupLoader")
 except ImportError:
     pass
+
+try:
+    from .pdfplumber_loader import PdfPlumberLoader
+
+    __all__.append("PdfPlumberLoader")
+except ImportError:
+    pass
+
+try:
+    from .ocr_pdf_loader import OcrPdfLoader
+
+    __all__.append("OcrPdfLoader")
+except ImportError:
+    pass

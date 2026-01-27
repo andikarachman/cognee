@@ -39,6 +39,7 @@ async def get_search_type_tools(
     last_k: Optional[int] = None,
     wide_search_top_k: Optional[int] = 100,
     triplet_distance_penalty: Optional[float] = 3.5,
+    include_layout: bool = False,
 ) -> list:
     search_tasks: dict[SearchType, List[Callable]] = {
         SearchType.SUMMARIES: [
@@ -46,8 +47,8 @@ async def get_search_type_tools(
             SummariesRetriever(top_k=top_k).get_context,
         ],
         SearchType.CHUNKS: [
-            ChunksRetriever(top_k=top_k).get_completion,
-            ChunksRetriever(top_k=top_k).get_context,
+            ChunksRetriever(top_k=top_k, include_layout=include_layout).get_completion,
+            ChunksRetriever(top_k=top_k, include_layout=include_layout).get_context,
         ],
         SearchType.RAG_COMPLETION: [
             CompletionRetriever(

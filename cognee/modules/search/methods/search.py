@@ -47,6 +47,7 @@ async def search(
     wide_search_top_k: Optional[int] = 100,
     triplet_distance_penalty: Optional[float] = 3.5,
     verbose=False,
+    include_layout: bool = False,
 ) -> List[SearchResult]:
     """
 
@@ -91,6 +92,7 @@ async def search(
             session_id=session_id,
             wide_search_top_k=wide_search_top_k,
             triplet_distance_penalty=triplet_distance_penalty,
+            include_layout=include_layout,
         )
     else:
         search_results = [
@@ -108,6 +110,7 @@ async def search(
                 session_id=session_id,
                 wide_search_top_k=wide_search_top_k,
                 triplet_distance_penalty=triplet_distance_penalty,
+                include_layout=include_layout,
             )
         ]
 
@@ -199,6 +202,7 @@ async def authorized_search(
     session_id: Optional[str] = None,
     wide_search_top_k: Optional[int] = 100,
     triplet_distance_penalty: Optional[float] = 3.5,
+    include_layout: bool = False,
 ) -> List[Tuple[Any, Union[List[Edge], str], List[Dataset]]]:
     """
     Verifies access for provided datasets or uses all datasets user has read access for and performs search per dataset.
@@ -225,6 +229,7 @@ async def authorized_search(
         session_id=session_id,
         wide_search_top_k=wide_search_top_k,
         triplet_distance_penalty=triplet_distance_penalty,
+        include_layout=include_layout,
     )
 
     return search_results
@@ -246,6 +251,7 @@ async def search_in_datasets_context(
     session_id: Optional[str] = None,
     wide_search_top_k: Optional[int] = 100,
     triplet_distance_penalty: Optional[float] = 3.5,
+    include_layout: bool = False,
 ) -> List[Tuple[Any, Union[str, List[Edge]], List[Dataset]]]:
     """
     Searches all provided datasets and handles setting up of appropriate database context based on permissions.
@@ -268,6 +274,7 @@ async def search_in_datasets_context(
         session_id: Optional[str] = None,
         wide_search_top_k: Optional[int] = 100,
         triplet_distance_penalty: Optional[float] = 3.5,
+        include_layout: bool = False,
     ) -> Tuple[Any, Union[str, List[Edge]], List[Dataset]]:
         # Set database configuration in async context for each dataset user has access for
         await set_database_global_context_variables(dataset.id, dataset.owner_id)
@@ -303,6 +310,7 @@ async def search_in_datasets_context(
             last_k=last_k,
             wide_search_top_k=wide_search_top_k,
             triplet_distance_penalty=triplet_distance_penalty,
+            include_layout=include_layout,
         )
         search_tools = specific_search_tools
         if len(search_tools) == 2:
@@ -340,6 +348,7 @@ async def search_in_datasets_context(
                 session_id=session_id,
                 wide_search_top_k=wide_search_top_k,
                 triplet_distance_penalty=triplet_distance_penalty,
+                include_layout=include_layout,
             )
         )
 

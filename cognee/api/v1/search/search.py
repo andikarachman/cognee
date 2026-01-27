@@ -36,6 +36,7 @@ async def search(
     wide_search_top_k: Optional[int] = 100,
     triplet_distance_penalty: Optional[float] = 3.5,
     verbose: bool = False,
+    include_layout: bool = False,
 ) -> List[SearchResult]:
     """
     Search and query the knowledge graph for insights, information, and connections.
@@ -220,6 +221,7 @@ async def search(
         wide_search_top_k=wide_search_top_k,
         triplet_distance_penalty=triplet_distance_penalty,
         verbose=verbose,
+        include_layout=include_layout,
     )
 
     return filtered_search_results

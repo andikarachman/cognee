@@ -6,3 +6,11 @@ from .image_loader import ImageLoader
 from .csv_loader import CsvLoader
 
 __all__ = ["TextLoader", "AudioLoader", "ImageLoader", "CsvLoader"]
+
+# Optional OCR image loader
+try:
+    from .ocr_image_loader import OcrImageLoader
+
+    __all__.append("OcrImageLoader")
+except ImportError:
+    pass

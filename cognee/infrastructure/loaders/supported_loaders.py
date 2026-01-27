@@ -31,3 +31,25 @@ try:
     supported_loaders[BeautifulSoupLoader.loader_name] = BeautifulSoupLoader
 except ImportError:
     pass
+
+# Layout-aware PDF loaders (with OCR support)
+try:
+    from cognee.infrastructure.loaders.external import PdfPlumberLoader
+
+    supported_loaders[PdfPlumberLoader.loader_name] = PdfPlumberLoader
+except ImportError:
+    pass
+
+try:
+    from cognee.infrastructure.loaders.external import OcrPdfLoader
+
+    supported_loaders[OcrPdfLoader.loader_name] = OcrPdfLoader
+except ImportError:
+    pass
+
+try:
+    from cognee.infrastructure.loaders.core import OcrImageLoader
+
+    supported_loaders[OcrImageLoader.loader_name] = OcrImageLoader
+except ImportError:
+    pass

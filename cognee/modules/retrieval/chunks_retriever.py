@@ -25,8 +25,83 @@ class ChunksRetriever(BaseRetriever):
     def __init__(
         self,
         top_k: Optional[int] = 5,
+        include_layout: bool = False,
     ):
         self.top_k = top_k
+        self.include_layout = include_layout
+
+    def _has_layout_info(self, payload: dict) -> bool:
+        """Check if payload contains layout information."""
+        return (
+            "bounding_boxes" in payload
+            or "page_number" in payload
+            or "layout_type" in payload
+        )
+
+    def _extract_bbox(self, payload: dict) -> Optional[Any]:
+        """Extract primary bounding box from payload."""
+        from cognee.modules.search.types.SearchResult import BoundingBox
+
+        if "bounding_boxes" in payload and payload["bounding_boxes"]:
+            # Get first bbox (primary)
+            bbox_data = payload["bounding_boxes"][0]
+            if isinstance(bbox_data, dict):
+                return BoundingBox(
+                    x_min=bbox_data.get("x_min", 0.0),
+                    y_min=bbox_data.get("y_min", 0.0),
+                    x_max=bbox_data.get("x_max", 1.0),
+                    y_max=bbox_data.get("y_max", 1.0),
+                    confidence=bbox_data.get("confidence"),
+                )
+        return None
+
+    def _extract_chunk_metadata(self, results: list) -> list:
+        """
+        Transform vector search results to ChunkMetadata with layout.
+
+        Args:
+            results: List of search results from vector engine
+
+        Returns:
+            List of ChunkMetadata objects
+        """
+        from cognee.modules.search.types.SearchResult import (
+            ChunkMetadata,
+            LayoutMetadata,
+        )
+
+        chunks = []
+        for result in results:
+            payload = result.payload
+
+            # Extract layout metadata if available
+            layout = None
+            if self._has_layout_info(payload):
+                bbox = self._extract_bbox(payload)
+                layout = LayoutMetadata(
+                    page_number=payload.get("page_number"),
+                    bbox=bbox,
+                    layout_type=payload.get("layout_type"),
+                    confidence=payload.get("ocr_confidence"),
+                    page_width=payload.get("page_dimensions", {}).get("width")
+                    if isinstance(payload.get("page_dimensions"), dict)
+                    else None,
+                    page_height=payload.get("page_dimensions", {}).get("height")
+                    if isinstance(payload.get("page_dimensions"), dict)
+                    else None,
+                )
+
+            chunks.append(
+                ChunkMetadata(
+                    text=payload.get("text", ""),
+                    chunk_id=payload.get("id"),
+                    chunk_index=payload.get("chunk_index"),
+                    score=getattr(result, "score", None),
+                    layout=layout,
+                )
+            )
+
+        return chunks
 
     async def get_context(self, query: str) -> Any:
         """
@@ -38,7 +113,8 @@ class ChunksRetriever(BaseRetriever):
             - query (str): The query string to search for relevant document chunks.
         Returns:
         --------
-            - Any: A list of document chunk payloads retrieved from the search.
+            - Any: A list of document chunk payloads or ChunkMetadata objects
+                   (depending on include_layout setting).
         """
         logger.info(
             f"Starting chunk retrieval for query: '{query[:100]}{'...' if len(query) > 100 else ''}'"
@@ -57,9 +133,15 @@ class ChunksRetriever(BaseRetriever):
             logger.error("DocumentChunk_text collection not found in vector database")
             raise NoDataError("No data found in the system, please add data first.") from error
 
-        chunk_payloads = [result.payload for result in found_chunks]
-        logger.info(f"Returning {len(chunk_payloads)} chunk payloads")
-        return chunk_payloads
+        # Return structured metadata if requested, otherwise return raw payloads
+        if self.include_layout:
+            chunk_metadata = self._extract_chunk_metadata(found_chunks)
+            logger.info(f"Returning {len(chunk_metadata)} chunk metadata objects with layout")
+            return chunk_metadata
+        else:
+            chunk_payloads = [result.payload for result in found_chunks]
+            logger.info(f"Returning {len(chunk_payloads)} chunk payloads")
+            return chunk_payloads
 
     async def get_completion(
         self, query: str, context: Optional[Any] = None, session_id: Optional[str] = None

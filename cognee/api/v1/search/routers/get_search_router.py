@@ -33,6 +33,10 @@ class SearchPayloadDTO(InDTO):
     top_k: Optional[int] = Field(default=10)
     only_context: bool = Field(default=False)
     verbose: bool = Field(default=False)
+    include_layout: bool = Field(
+        default=False,
+        description="Include bounding box and layout metadata in results (CHUNKS search only)",
+    )
 
 
 def get_search_router() -> APIRouter:
@@ -139,6 +143,7 @@ def get_search_router() -> APIRouter:
                 top_k=payload.top_k,
                 verbose=payload.verbose,
                 only_context=payload.only_context,
+                include_layout=payload.include_layout,
             )
 
             return jsonable_encoder(results)

@@ -26,6 +26,7 @@ async def no_access_control_search(
     session_id: Optional[str] = None,
     wide_search_top_k: Optional[int] = 100,
     triplet_distance_penalty: Optional[float] = 3.5,
+    include_layout: bool = False,
 ) -> Tuple[Any, Union[str, List[Edge]], List[Dataset]]:
     search_tools = await get_search_type_tools(
         query_type=query_type,
@@ -39,6 +40,7 @@ async def no_access_control_search(
         last_k=last_k,
         wide_search_top_k=wide_search_top_k,
         triplet_distance_penalty=triplet_distance_penalty,
+        include_layout=include_layout,
     )
     graph_engine = await get_graph_engine()
     is_empty = await graph_engine.is_empty()

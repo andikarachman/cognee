@@ -162,6 +162,14 @@ monitoring = ["sentry-sdk[fastapi]>=2.9.0,<3", "langfuse>=2.32.0,<3"]
 
 docling = ["docling>=2.54", "transformers>=4.55"]
 
+ocr = [
+    "pdfplumber>=0.11.0",    # For digital PDFs with native bbox extraction
+    "paddleocr>=2.8.1",      # For scanned PDFs and images
+    "paddlepaddle>=2.6.2",   # CPU version of PaddlePaddle
+    "Pillow>=10.0.0",        # Image processing
+    "pdf2image>=1.17.0",     # PDF to image conversion for OCR
+]
+
 [project.urls]
 Homepage = "https://www.cognee.ai"
 Repository = "https://github.com/topoteretes/cognee"
