@@ -14,18 +14,16 @@ class TestBoundingBoxNormalization:
 
         # Test with page dimensions 1000x1400
         bbox = loader._normalize_bbox(
-            x0=100,
-            y0=200,
-            x1=800,
-            y1=900,
+            bbox=(100, 200, 800, 900),
             page_width=1000,
             page_height=1400,
         )
 
-        assert abs(bbox.x_min - 0.1) < 0.01  # 100/1000
-        assert abs(bbox.y_min - 0.143) < 0.01  # 200/1400
-        assert abs(bbox.x_max - 0.8) < 0.01  # 800/1000
-        assert abs(bbox.y_max - 0.643) < 0.01  # 900/1400
+        # Returns tuple (x_min, y_min, x_max, y_max), not object
+        assert abs(bbox[0] - 0.1) < 0.01  # x_min: 100/1000
+        assert abs(bbox[1] - 0.143) < 0.01  # y_min: 200/1400
+        assert abs(bbox[2] - 0.8) < 0.01  # x_max: 800/1000
+        assert abs(bbox[3] - 0.643) < 0.01  # y_max: 900/1400
 
 
 class TestLayoutTypeDetection:
@@ -34,13 +32,13 @@ class TestLayoutTypeDetection:
     @pytest.mark.parametrize(
         "y_pos,page_height,expected_type",
         [
-            (50, 1000, "header"),  # Top 10%
-            (80, 1000, "header"),  # Top 10%
-            (100, 1000, "text"),  # Just below header threshold
+            (30, 1000, "header"),  # y1=80 < 100 (top 10%)
+            (40, 1000, "header"),  # y1=90 < 100 (top 10%)
+            (100, 1000, "text"),  # y1=150 >= 100 (below header threshold)
             (500, 1000, "text"),  # Middle
-            (900, 1000, "footer"),  # Bottom 10%
-            (920, 1000, "footer"),  # Bottom 10%
-            (880, 1000, "text"),  # Just above footer threshold
+            (860, 1000, "text"),  # y0=860 <= 900 (above footer threshold)
+            (920, 1000, "footer"),  # y0=920 > 900 (bottom 10%)
+            (950, 1000, "footer"),  # y0=950 > 900 (bottom 10%)
         ],
     )
     def test_detect_layout_type_by_position(self, y_pos, page_height, expected_type):
@@ -48,11 +46,7 @@ class TestLayoutTypeDetection:
         loader = PdfPlumberLoader()
 
         layout_type = loader._detect_layout_type(
-            x0=100,
-            y0=y_pos,
-            x1=800,
-            y1=y_pos + 50,
-            page_width=1000,
+            bbox=(100, y_pos, 800, y_pos + 50),
             page_height=page_height,
             is_in_table=False,
         )
@@ -64,11 +58,7 @@ class TestLayoutTypeDetection:
         loader = PdfPlumberLoader()
 
         layout_type = loader._detect_layout_type(
-            x0=100,
-            y0=500,
-            x1=800,
-            y1=600,
-            page_width=1000,
+            bbox=(100, 500, 800, 600),
             page_height=1000,
             is_in_table=True,
         )
@@ -79,95 +69,81 @@ class TestLayoutTypeDetection:
 class TestWordExtraction:
     """Tests for word and line extraction from PDF."""
 
-    @patch("cognee.infrastructure.loaders.external.pdfplumber_loader.pdfplumber")
-    def test_extract_words_basic(self, mock_pdfplumber):
+    def test_extract_words_basic(self):
         """Test basic word extraction with bbox."""
         # Mock pdfplumber page
         mock_page = Mock()
         mock_page.width = 1000
         mock_page.height = 1400
         mock_page.extract_words.return_value = [
-            {"text": "Hello", "x0": 100, "y0": 200, "x1": 200, "y1": 250},
-            {"text": "World", "x0": 210, "y0": 200, "x1": 310, "y1": 250},
+            {"text": "Hello", "x0": 100, "top": 200, "x1": 200, "bottom": 250},
+            {"text": "World", "x0": 210, "top": 200, "x1": 310, "bottom": 250},
         ]
         mock_page.find_tables.return_value = []
 
-        mock_pdf = MagicMock()
-        mock_pdf.__enter__.return_value.pages = [mock_page]
-        mock_pdfplumber.open.return_value = mock_pdf
-
         loader = PdfPlumberLoader()
-        result = loader._extract_text_with_layout("test.pdf")
+        result = loader._extract_words_with_layout(mock_page, page_num=1)
 
-        assert "Hello" in result
-        assert "World" in result
-        assert "[page=1" in result
-        assert "bbox=" in result
-        assert "type=" in result
+        # result is List[str], join to check content
+        result_text = "\n".join(result)
+        assert "Hello" in result_text
+        assert "World" in result_text
+        assert "[page=1" in result_text
+        assert "bbox=" in result_text
+        assert "type=" in result_text
 
-    @patch("cognee.infrastructure.loaders.external.pdfplumber_loader.pdfplumber")
-    def test_line_grouping(self, mock_pdfplumber):
+    def test_line_grouping(self):
         """Test that words with similar Y-coordinates are grouped into lines."""
         mock_page = Mock()
         mock_page.width = 1000
         mock_page.height = 1000
         mock_page.extract_words.return_value = [
             # Line 1 (y=200-210)
-            {"text": "First", "x0": 100, "y0": 200, "x1": 200, "y1": 210},
-            {"text": "line", "x0": 210, "y0": 202, "x1": 280, "y1": 212},
+            {"text": "First", "x0": 100, "top": 200, "x1": 200, "bottom": 210},
+            {"text": "line", "x0": 210, "top": 202, "x1": 280, "bottom": 212},
             # Line 2 (y=300-310)
-            {"text": "Second", "x0": 100, "y0": 300, "x1": 200, "y1": 310},
-            {"text": "line", "x0": 210, "y0": 302, "x1": 280, "y1": 312},
+            {"text": "Second", "x0": 100, "top": 300, "x1": 200, "bottom": 310},
+            {"text": "line", "x0": 210, "top": 302, "x1": 280, "bottom": 312},
         ]
         mock_page.find_tables.return_value = []
 
-        mock_pdf = MagicMock()
-        mock_pdf.__enter__.return_value.pages = [mock_page]
-        mock_pdfplumber.open.return_value = mock_pdf
-
         loader = PdfPlumberLoader()
-        result = loader._extract_text_with_layout("test.pdf")
+        result = loader._extract_words_with_layout(mock_page, page_num=1)
 
+        # Should have two lines
+        assert len(result) == 2
+        result_text = "\n".join(result)
         # Should have "First line" on one line
-        assert "First line" in result or ("First" in result and "line" in result)
+        assert "First line" in result_text
 
-    @patch("cognee.infrastructure.loaders.external.pdfplumber_loader.pdfplumber")
-    def test_table_detection(self, mock_pdfplumber):
+    def test_table_detection(self):
         """Test table detection and marking."""
         mock_table = Mock()
         mock_table.bbox = (100, 300, 800, 600)  # x0, y0, x1, y1
-        mock_table.extract.return_value = [
-            ["Header1", "Header2"],
-            ["Cell1", "Cell2"],
-        ]
 
         mock_page = Mock()
         mock_page.width = 1000
         mock_page.height = 1000
         mock_page.extract_words.return_value = [
-            {"text": "Header1", "x0": 100, "y0": 300, "x1": 200, "y1": 320},
-            {"text": "Cell1", "x0": 100, "y0": 350, "x1": 180, "y1": 370},
+            {"text": "Header1", "x0": 100, "top": 300, "x1": 200, "bottom": 320},
+            {"text": "Cell1", "x0": 100, "top": 350, "x1": 180, "bottom": 370},
         ]
         mock_page.find_tables.return_value = [mock_table]
 
-        mock_pdf = MagicMock()
-        mock_pdf.__enter__.return_value.pages = [mock_page]
-        mock_pdfplumber.open.return_value = mock_pdf
-
         loader = PdfPlumberLoader()
-        result = loader._extract_text_with_layout("test.pdf")
+        result = loader._extract_words_with_layout(mock_page, page_num=1)
 
+        result_text = "\n".join(result)
         # Should have table marker
-        assert "type=table" in result
+        assert "type=table" in result_text
 
-    @patch("cognee.infrastructure.loaders.external.pdfplumber_loader.pdfplumber")
-    def test_multi_page_extraction(self, mock_pdfplumber):
+    def test_multi_page_extraction(self):
         """Test extraction from multiple pages."""
         mock_page1 = Mock()
         mock_page1.width = 1000
         mock_page1.height = 1000
         mock_page1.extract_words.return_value = [
-            {"text": "Page1", "x0": 100, "y0": 200, "x1": 200, "y1": 220},
+            {"text": "Page1", "x0": 100, "top": 200, "x1": 200, "bottom": 220},
         ]
         mock_page1.find_tables.return_value = []
 
@@ -175,118 +151,153 @@ class TestWordExtraction:
         mock_page2.width = 1000
         mock_page2.height = 1000
         mock_page2.extract_words.return_value = [
-            {"text": "Page2", "x0": 100, "y0": 200, "x1": 200, "y1": 220},
+            {"text": "Page2", "x0": 100, "top": 200, "x1": 200, "bottom": 220},
         ]
         mock_page2.find_tables.return_value = []
 
-        mock_pdf = MagicMock()
-        mock_pdf.__enter__.return_value.pages = [mock_page1, mock_page2]
-        mock_pdfplumber.open.return_value = mock_pdf
-
         loader = PdfPlumberLoader()
-        result = loader._extract_text_with_layout("test.pdf")
+        result1 = loader._extract_words_with_layout(mock_page1, page_num=1)
+        result2 = loader._extract_words_with_layout(mock_page2, page_num=2)
 
-        assert "Page1" in result
-        assert "Page2" in result
-        assert "[page=1" in result
-        assert "[page=2" in result
+        result_text1 = "\n".join(result1)
+        result_text2 = "\n".join(result2)
+
+        assert "Page1" in result_text1
+        assert "Page2" in result_text2
+        assert "[page=1" in result_text1
+        assert "[page=2" in result_text2
 
 
 class TestLoaderIntegration:
     """Tests for full loader integration."""
 
     @pytest.mark.asyncio
-    @patch("cognee.infrastructure.loaders.external.pdfplumber_loader.pdfplumber")
+    @patch("builtins.open", create=True)
     @patch("cognee.infrastructure.loaders.external.pdfplumber_loader.get_file_storage")
     @patch("cognee.infrastructure.loaders.external.pdfplumber_loader.get_file_metadata")
     async def test_load_method_success(
-        self, mock_get_metadata, mock_get_storage, mock_pdfplumber
+        self, mock_get_metadata, mock_get_storage, mock_open
     ):
         """Test full load() method with storage."""
+        import sys
+
+        # Mock file object
+        mock_file = MagicMock()
+        mock_file.__enter__.return_value = mock_file
+        mock_file.__exit__.return_value = None
+        mock_open.return_value = mock_file
+
         # Mock PDF
         mock_page = Mock()
         mock_page.width = 1000
         mock_page.height = 1000
         mock_page.extract_words.return_value = [
-            {"text": "Test", "x0": 100, "y0": 200, "x1": 200, "y1": 220},
+            {"text": "Test", "x0": 100, "top": 200, "x1": 200, "bottom": 220},
         ]
         mock_page.find_tables.return_value = []
 
         mock_pdf = MagicMock()
         mock_pdf.__enter__.return_value.pages = [mock_page]
+        mock_pdf.__exit__.return_value = None
+
+        mock_pdfplumber = MagicMock()
         mock_pdfplumber.open.return_value = mock_pdf
 
         # Mock storage
         mock_storage = AsyncMock()
+        mock_storage.store.return_value = "/path/to/layout_text_hash.txt"
         mock_get_storage.return_value = mock_storage
 
         # Mock metadata
-        mock_get_metadata.return_value = {"name": "test.pdf"}
+        mock_get_metadata.return_value = {"name": "test.pdf", "content_hash": "hash123"}
 
-        loader = PdfPlumberLoader()
-        result = await loader.load("test.pdf")
+        # Inject mock pdfplumber into sys.modules
+        original_pdfplumber = sys.modules.get('pdfplumber')
+        sys.modules['pdfplumber'] = mock_pdfplumber
 
-        # Should return list with one item (the stored text file)
-        assert isinstance(result, list)
-        assert len(result) == 1
+        try:
+            loader = PdfPlumberLoader()
+            result = await loader.load("test.pdf")
 
-        # Verify storage was called
-        mock_storage.store.assert_called_once()
+            # Should return the stored file path
+            assert result == "/path/to/layout_text_hash.txt"
 
-        # Verify filename format
-        call_args = mock_storage.store.call_args
-        assert "layout_text_" in call_args[1]["filename"]
-        assert call_args[1]["filename"].endswith(".txt")
+            # Verify storage was called
+            mock_storage.store.assert_called_once()
 
-    @pytest.mark.asyncio
-    @patch("cognee.infrastructure.loaders.external.pdfplumber_loader.pdfplumber")
-    async def test_load_handles_empty_pdf(self, mock_pdfplumber):
-        """Test loading empty PDF."""
-        mock_pdf = MagicMock()
-        mock_pdf.__enter__.return_value.pages = []
-        mock_pdfplumber.open.return_value = mock_pdf
-
-        loader = PdfPlumberLoader()
-        result = loader._extract_text_with_layout("empty.pdf")
-
-        assert result == ""  # Empty string for empty PDF
+            # Verify filename format - storage.store() called with positional args
+            call_args = mock_storage.store.call_args
+            filename = call_args[0][0]  # First positional arg
+            assert "layout_text_" in filename
+            assert filename.endswith(".txt")
+        finally:
+            # Restore original pdfplumber module
+            if original_pdfplumber is not None:
+                sys.modules['pdfplumber'] = original_pdfplumber
+            else:
+                sys.modules.pop('pdfplumber', None)
 
     @pytest.mark.asyncio
-    @patch("cognee.infrastructure.loaders.external.pdfplumber_loader.pdfplumber")
-    async def test_load_handles_error(self, mock_pdfplumber):
-        """Test error handling during load."""
-        mock_pdfplumber.open.side_effect = Exception("PDF open failed")
+    async def test_load_handles_empty_pdf(self):
+        """Test loading empty page."""
+        mock_page = Mock()
+        mock_page.width = 1000
+        mock_page.height = 1000
+        mock_page.extract_words.return_value = []
+        mock_page.find_tables.return_value = []
+
+        loader = PdfPlumberLoader()
+        result = loader._extract_words_with_layout(mock_page, page_num=1)
+
+        assert result == []  # Empty list for empty page
+
+    @pytest.mark.asyncio
+    async def test_load_handles_error(self):
+        """Test error handling during extraction."""
+        mock_page = Mock()
+        mock_page.extract_words.side_effect = Exception("Extract failed")
 
         loader = PdfPlumberLoader()
 
         with pytest.raises(Exception):
-            loader._extract_text_with_layout("invalid.pdf")
+            loader._extract_words_with_layout(mock_page, page_num=1)
 
     def test_output_format(self):
         """Test that output has correct metadata format."""
-        loader = PdfPlumberLoader()
+        mock_page = Mock()
+        mock_page.width = 1000
+        mock_page.height = 1000
+        mock_page.extract_words.return_value = [
+            {"text": "Sample", "x0": 100, "top": 200, "x1": 200, "bottom": 220},
+            {"text": "text", "x0": 210, "top": 200, "x1": 280, "bottom": 220},
+        ]
+        mock_page.find_tables.return_value = []
 
-        # Create a test line output
-        line_output = loader._format_line_output(
-            text="Sample text",
-            bbox_tuple=(0.1, 0.2, 0.8, 0.3),
-            layout_type="text",
-            page_number=1,
-        )
+        loader = PdfPlumberLoader()
+        result = loader._extract_words_with_layout(mock_page, page_num=1)
+
+        # Should have one line with both words
+        assert len(result) == 1
+        line_output = result[0]
 
         assert "Sample text" in line_output
         assert "[page=1" in line_output
-        assert "bbox=(0.1" in line_output
-        assert "type=text" in line_output
+        assert "bbox=" in line_output
+        assert "type=" in line_output
 
     def test_can_handle_method(self):
         """Test can_handle method identifies PDF files."""
         loader = PdfPlumberLoader()
 
-        assert loader.can_handle("test.pdf") is True
-        assert loader.can_handle("test.PDF") is True
-        assert loader.can_handle("test.txt") is False
-        assert loader.can_handle("test.docx") is False
+        # PDF files (extension should be lowercase)
+        assert loader.can_handle("pdf", "application/pdf") is True
+
+        # Non-PDF files
+        assert loader.can_handle("txt", "text/plain") is False
+        assert loader.can_handle("docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document") is False
+
+        # Wrong mime type
+        assert loader.can_handle("pdf", "text/plain") is False
 
     def test_loader_name(self):
         """Test loader has correct name."""

@@ -6,16 +6,27 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Cognee is an open-source AI memory platform that transforms raw data into persistent knowledge graphs for AI agents. It replaces traditional RAG (Retrieval-Augmented Generation) with an ECL (Extract, Cognify, Load) pipeline combining vector search, graph databases, and LLM-powered entity extraction.
 
-**Requirements**: Python 3.9 - 3.12
+**Requirements**: Python 3.10 - 3.13
 
 ## Development Commands
 
 ### Setup
-```bash
-# Create virtual environment (recommended: uv)
-uv venv && source .venv/bin/activate
 
-# Install with pip, poetry, or uv
+**Recommended: Use `uv` for faster package management**
+
+```bash
+# Install uv if not already installed
+# See: https://docs.astral.sh/uv/getting-started/installation/
+
+# Create virtual environment
+uv venv
+
+# Activate virtual environment
+source .venv/bin/activate  # Unix/macOS
+# or
+.venv\Scripts\activate  # Windows
+
+# Install cognee in editable mode
 uv pip install -e .
 
 # Install with dev dependencies
@@ -24,8 +35,18 @@ uv pip install -e ".[dev]"
 # Install with specific extras
 uv pip install -e ".[postgres,neo4j,docs,chromadb]"
 
+# Sync dependencies (alternative to pip install)
+uv sync
+
 # Set up pre-commit hooks
 pre-commit install
+```
+
+**Alternative: Use pip or poetry**
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
 ```
 
 ### Available Installation Extras
@@ -58,6 +79,8 @@ pre-commit install
 - **distributed** - Modal distributed execution
 - **dev** - All development tools (pytest, mypy, ruff, etc.)
 - **debug** - Debugpy for debugging
+- **docling** - Docling document processing
+- **gemini** - Google Gemini models
 
 ### Testing
 ```bash
@@ -81,6 +104,13 @@ pytest cognee/tests/unit/
 
 # Run integration tests only
 pytest cognee/tests/integration/
+
+# Run specific feature tests
+pytest cognee/tests/tasks/translation/ -v  # Translation tests
+pytest cognee/tests/integration/retrieval/ -v  # Retrieval tests
+
+# Run using uv (recommended)
+uv run pytest cognee/tests/test_library.py
 ```
 
 ### Code Quality
@@ -114,6 +144,9 @@ cognee-cli delete --all
 
 # Launch full stack with UI
 cognee-cli -ui
+
+# Run database migrations (if needed after updates)
+python cognee/run_migrations.py
 ```
 
 ## Architecture Overview
@@ -123,7 +156,7 @@ cognee-cli -ui
 1. **add()** - Ingest data (files, URLs, text) into datasets
 2. **cognify()** - Extract entities/relationships and build knowledge graph
 3. **search()** - Query knowledge using various retrieval strategies
-4. **memify()** - Enrich graph with additional context and rules
+4. **memify()** - Enrich existing graph with custom extraction and enrichment tasks (e.g., coding rules, usage patterns)
 
 ### Key Architectural Patterns
 
@@ -141,7 +174,7 @@ Key files:
 - `cognee/infrastructure/databases/vector/vector_db_interface.py`
 
 #### 3. Multi-Tenant Access Control
-User → Dataset → Data hierarchy with permission-based filtering. Enable with `ENABLE_BACKEND_ACCESS_CONTROL=True`. Each user+dataset combination can have isolated graph/vector databases (when using supported backends: Kuzu, LanceDB, SQLite, Postgres).
+User → Dataset → Data hierarchy with permission-based filtering. Enable with `ENABLE_BACKEND_ACCESS_CONTROL=True`. Each user+dataset combination can have isolated graph/vector databases (when using supported backends: Kuzu, LanceDB, SQLite, Postgres, PGVector).
 
 ### Layer Structure
 
@@ -415,6 +448,83 @@ ONTOLOGY_FILE_PATH=/path/to/your/ontology.owl  # Full path to ontology file
 
 Implementation: `cognee/modules/ontology/`
 
+### Translation Features
+
+Cognee now supports multilingual content translation with automatic language detection:
+
+```bash
+# Enable translation in pipeline (optional configuration)
+TRANSLATION_PROVIDER=llm  # or "google", "azure"
+TRANSLATION_TARGET_LANGUAGE=en
+TRANSLATION_CONFIDENCE_THRESHOLD=0.7
+
+# For Google Translate
+GOOGLE_TRANSLATE_API_KEY=your_key
+
+# For Azure Translator
+AZURE_TRANSLATOR_KEY=your_key
+AZURE_TRANSLATOR_REGION=your_region
+```
+
+**Translation API:**
+```python
+from cognee.tasks.translation import translate_text, translate_content
+
+# Translate single text
+result = await translate_text("Bonjour le monde", target_language="en")
+print(result.translated_text)  # "Hello world"
+
+# Translate document chunks in pipeline
+translated_chunks = await translate_content(chunks, target_language="en")
+```
+
+**Supported Providers:**
+- **LLM** (default) - Uses configured LLM via existing infrastructure
+- **Google Translate** - Requires `google-cloud-translate` package
+- **Azure Translator** - Requires Azure Translator API key
+
+Implementation: `cognee/tasks/translation/`
+
+### Data Cleanup Features
+
+Automatically remove unused data based on access tracking:
+
+```bash
+# Enable access tracking
+ENABLE_LAST_ACCESSED=true
+```
+
+**Cleanup API:**
+```python
+from cognee.tasks.cleanup import cleanup_unused_data
+
+# Dry run to see what would be deleted
+result = await cleanup_unused_data(
+    minutes_threshold=10080,  # 7 days
+    dry_run=True,
+    user_id=user_id  # Optional: limit to specific user
+)
+
+# Actually delete unused data
+result = await cleanup_unused_data(
+    minutes_threshold=10080,
+    dry_run=False
+)
+```
+
+Implementation: `cognee/tasks/cleanup/cleanup_unused_data.py`
+
+### Usage Logging
+
+Track LLM usage, token counts, and costs:
+
+```bash
+# Usage logs are automatically stored in cache
+# Query usage statistics via usage_logger module
+```
+
+Implementation: `cognee/shared/usage_logger.py`
+
 ## Branching Strategy
 
 **IMPORTANT**: Always branch from `dev`, not `main`. The `dev` branch is the active development branch.
@@ -461,10 +571,15 @@ Main functions exported from `cognee/__init__.py`:
 - `add(data, dataset_name)` - Ingest data
 - `cognify(datasets)` - Build knowledge graph
 - `search(query_text, query_type)` - Query knowledge
-- `memify(extraction_tasks, enrichment_tasks)` - Enrich graph
+- `memify(extraction_tasks, enrichment_tasks, data, node_type, node_name)` - Enrich existing graph or process custom data with custom tasks
 - `delete(data_id)` - Remove data
+- `prune()` - Remove unused data based on access patterns
+- `update(data_id, new_data)` - Update existing data
 - `config()` - Configuration management
 - `datasets()` - Dataset operations
+- `visualize_graph()` / `start_visualization_server()` - Graph visualization
+- `start_ui()` - Launch web UI
+- `run_custom_pipeline(tasks, data)` - Run custom task pipelines
 
 All functions are async - use `await` or `asyncio.run()`.
 
@@ -476,6 +591,7 @@ Several security environment variables in `.env`:
 - `ALLOW_CYPHER_QUERY` - Allow raw Cypher queries (default: True)
 - `REQUIRE_AUTHENTICATION` - Enable API authentication (default: False)
 - `ENABLE_BACKEND_ACCESS_CONTROL` - Multi-tenant isolation (default: True)
+- `ENABLE_LAST_ACCESSED` - Track data access for cleanup features (default: False)
 
 For production deployments, review and tighten these settings.
 
@@ -533,7 +649,7 @@ Atomic knowledge units that form the foundation of graph structures. All graph n
 Multi-tenant architecture with users, roles, and Access Control Lists (ACLs):
 - Read, write, delete, and share permissions per dataset
 - Enable with `ENABLE_BACKEND_ACCESS_CONTROL=True`
-- Supports isolated databases per user+dataset (Kuzu, LanceDB, SQLite, Postgres)
+- Supports isolated databases per user+dataset (Kuzu, LanceDB, SQLite, Postgres, PGVector)
 
 ### Graph Visualization
 Launch visualization server:
@@ -545,6 +661,27 @@ cognee-cli -ui  # Launches full stack with UI at http://localhost:3000
 from cognee.api.v1.visualize import start_visualization_server
 await start_visualization_server(port=8080)
 ```
+
+## Database Migrations
+
+Database schema migrations are managed with Alembic and located in `cognee/alembic/`.
+
+### Running Migrations
+```bash
+# Run all pending migrations
+python cognee/run_migrations.py
+
+# Or use alembic directly
+alembic -c cognee/alembic.ini upgrade head
+
+# Create new migration
+alembic -c cognee/alembic.ini revision --autogenerate -m "description"
+
+# Rollback one migration
+alembic -c cognee/alembic.ini downgrade -1
+```
+
+**Note:** Migrations are automatically run when starting the API server. For manual database management, use the commands above.
 
 ## Debugging & Troubleshooting
 
@@ -581,10 +718,32 @@ await start_visualization_server(port=8080)
 - Enable client-side rate limiting: `LLM_RATE_LIMIT_ENABLED=true`
 - Adjust limits: `LLM_RATE_LIMIT_REQUESTS` and `LLM_RATE_LIMIT_INTERVAL`
 
+## Examples and Tutorials
+
+### Example Directories
+
+**`examples/`** - Simplified examples and quick guides:
+- `examples/guides/` - Feature-specific guides (search, ontology, temporal, memify, etc.)
+- `examples/python/` - Python SDK examples
+- `examples/database_examples/` - Database configuration examples
+
+**`new-examples/`** - Comprehensive demos and use cases:
+- `new-examples/demos/` - Feature demonstrations (ontology, multimedia, temporal, feedback, etc.)
+- `new-examples/custom_pipelines/` - Advanced pipeline examples (procurement, HR, product recommendation, etc.)
+- `new-examples/configurations/` - Configuration examples for databases, LLMs, embeddings, permissions
+
+### Interactive Tutorials
+
+Cognee includes built-in notebook tutorials accessible via the web UI:
+- **Cognee Basics** - Introduction to add, cognify, search workflow
+- **Python Development with Cognee** - Building custom pipelines and integrations
+
+Launch with `cognee-cli -ui` to access these tutorials.
+
 ## Resources
 
 - [Documentation](https://docs.cognee.ai/)
 - [Discord Community](https://discord.gg/NQPKmU5CCg)
 - [GitHub Issues](https://github.com/topoteretes/cognee/issues)
-- [Example Notebooks](examples/python/)
+- [Colab Walkthrough](https://colab.research.google.com/drive/12Vi9zID-M3fpKpKiaqDBvkk98ElkRPWy?usp=sharing)
 - [Research Paper](https://arxiv.org/abs/2505.24478) - Optimizing knowledge graphs for LLM reasoning

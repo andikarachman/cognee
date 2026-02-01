@@ -2,8 +2,9 @@
 
 import pytest
 from uuid import uuid4
+from cognee.shared.data_models import BoundingBox
 from cognee.modules.chunking.LayoutTextChunker import LayoutTextChunker
-from cognee.modules.chunking.models.LayoutChunk import LayoutChunk, LayoutType, BoundingBox
+from cognee.modules.chunking.models.LayoutChunk import LayoutChunk, LayoutType
 from cognee.modules.chunking.models import DocumentChunk
 from cognee.modules.data.processing.document_types import Document
 from cognee.tests.test_data.mock_data.mock_ocr_results import create_test_layout_text

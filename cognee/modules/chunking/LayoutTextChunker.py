@@ -6,8 +6,9 @@ from typing import List, Dict, Any, Optional
 from cognee.shared.logging_utils import get_logger
 from cognee.tasks.chunks import chunk_by_paragraph
 from cognee.modules.chunking.Chunker import Chunker
+from cognee.shared.data_models import BoundingBox
 from .models.DocumentChunk import DocumentChunk
-from .models.LayoutChunk import LayoutChunk, BoundingBox, LayoutType
+from .models.LayoutChunk import LayoutChunk, LayoutType
 
 logger = get_logger()
 

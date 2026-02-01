@@ -3,8 +3,8 @@
 import pytest
 from unittest.mock import Mock, patch, MagicMock, AsyncMock, patch as mock_patch
 from pathlib import Path
+from cognee.shared.data_models import BoundingBox
 from cognee.infrastructure.ocr.PaddleOCRAdapter import (
-    BoundingBox,
     OCRTextElement,
     OCRPageResult,
     OCRDocumentResult,
@@ -275,6 +275,7 @@ class TestLazyInitialization:
 
     @pytest.mark.asyncio
     @patch("paddleocr.PaddleOCR")
+    @patch("paddleocr.__version__", "3.0.0")
     async def test_ocr_engine_initialized_on_first_use(self, mock_paddle_ocr):
         """Test that OCR engine is initialized on first _get_ocr_engine call."""
         mock_engine = Mock()
@@ -286,10 +287,10 @@ class TestLazyInitialization:
 
         assert engine == mock_engine
         assert adapter._ocr_engine == mock_engine
+        # PaddleOCR 3.x uses device parameter instead of use_gpu
         mock_paddle_ocr.assert_called_once_with(
             lang="en",
-            use_gpu=False,
-            show_log=False,
+            device="cpu",
         )
 
     @pytest.mark.asyncio
@@ -431,3 +432,317 @@ class TestOCRDataModels:
         assert len(doc_result.pages) == 2
         assert doc_result.pages[0].page_number == 1
         assert doc_result.pages[1].page_number == 2
+
+
+class TestLayoutTypeMapping:
+    """Tests for PPStructureV3 layout type mapping."""
+
+    @pytest.mark.parametrize(
+        "label,expected",
+        [
+            ("text", "text"),
+            ("title", "title"),
+            ("paragraph title", "heading"),
+            ("paragraph", "paragraph"),
+            ("table", "table"),
+            ("table caption", "caption"),
+            ("figure", "figure"),
+            ("figure caption", "caption"),
+            ("image", "figure"),
+            ("header", "header"),
+            ("footer", "footer"),
+            ("page number", "footer"),
+            ("formula", "code"),
+            ("formula number", "code"),
+            ("reference", "text"),
+            ("footnote", "text"),
+            ("chart", "figure"),
+            ("algorithm", "code"),
+            ("seal", "figure"),
+            ("list", "list"),
+            ("unknown_label", "text"),  # Default fallback
+        ],
+    )
+    def test_layout_label_mapping(self, label, expected):
+        """Test that PPStructureV3 labels map correctly to layout types."""
+        adapter = PaddleOCRAdapter()
+        assert adapter._map_layout_label_to_type(label) == expected
+
+    def test_case_insensitive_mapping(self):
+        """Test that label mapping is case-insensitive."""
+        adapter = PaddleOCRAdapter()
+        assert adapter._map_layout_label_to_type("TEXT") == "text"
+        assert adapter._map_layout_label_to_type("Title") == "title"
+        assert adapter._map_layout_label_to_type("TABLE") == "table"
+
+
+class TestBBoxOverlap:
+    """Tests for bounding box overlap calculation."""
+
+    def test_full_overlap(self):
+        """Test IoU calculation for fully overlapping bboxes."""
+        adapter = PaddleOCRAdapter()
+        overlap = adapter._calculate_bbox_overlap(0, 0, 1, 1, 0, 0, 1, 1)
+        assert overlap == 1.0
+
+    def test_no_overlap(self):
+        """Test IoU calculation for non-overlapping bboxes."""
+        adapter = PaddleOCRAdapter()
+        overlap = adapter._calculate_bbox_overlap(0, 0, 0.5, 0.5, 0.6, 0.6, 1, 1)
+        assert overlap == 0.0
+
+    def test_partial_overlap(self):
+        """Test IoU calculation for partially overlapping bboxes."""
+        adapter = PaddleOCRAdapter()
+        overlap = adapter._calculate_bbox_overlap(0, 0, 0.6, 0.6, 0.4, 0.4, 1, 1)
+        assert 0 < overlap < 1
+
+    def test_touching_bboxes(self):
+        """Test IoU for bboxes that touch at edges (no overlap)."""
+        adapter = PaddleOCRAdapter()
+        overlap = adapter._calculate_bbox_overlap(0, 0, 0.5, 0.5, 0.5, 0, 1, 0.5)
+        assert overlap == 0.0
+
+    def test_contained_bbox(self):
+        """Test IoU when one bbox is completely inside another."""
+        adapter = PaddleOCRAdapter()
+        overlap = adapter._calculate_bbox_overlap(0.2, 0.2, 0.8, 0.8, 0, 0, 1, 1)
+        # Intersection = 0.6*0.6 = 0.36
+        # Union = 0.36 + (1.0 - 0.36) = 1.0
+        # IoU = 0.36 / 1.0 = 0.36
+        assert overlap == pytest.approx(0.36)
+
+
+class TestPPStructureV3Init:
+    """Tests for PPStructureV3 initialization."""
+
+    def test_structure_engine_lazy_init(self):
+        """Test that PPStructureV3 engine is not initialized until first use."""
+        adapter = PaddleOCRAdapter(use_structure=True)
+        assert adapter._structure_engine is None
+        assert adapter.use_structure is True
+
+    def test_structure_config_passed(self):
+        """Test that structure_config is stored correctly."""
+        config = {'use_table_recognition': True, 'use_formula_recognition': False}
+        adapter = PaddleOCRAdapter(use_structure=True, structure_config=config)
+        assert adapter.structure_config == config
+
+    def test_default_structure_config(self):
+        """Test that structure_config defaults to empty dict."""
+        adapter = PaddleOCRAdapter(use_structure=True)
+        assert adapter.structure_config == {}
+
+
+class TestDualEngineRouting:
+    """Tests for routing between PaddleOCR and PPStructureV3."""
+
+    @pytest.mark.asyncio
+    async def test_routes_to_paddleocr_by_default(self):
+        """Test that process_image routes to PaddleOCR when use_structure=False."""
+        adapter = PaddleOCRAdapter(use_structure=False)
+
+        # Mock the PaddleOCR processing method
+        with patch.object(
+            adapter, '_process_image_with_paddleocr',
+            new=AsyncMock(return_value=OCRPageResult(
+                page_number=1,
+                elements=[],
+                page_width=1000,
+                page_height=1000,
+            ))
+        ) as mock_paddleocr_process:
+            result = await adapter.process_image("test.jpg", page_number=1)
+
+            mock_paddleocr_process.assert_called_once_with("test.jpg", 1)
+            assert result.page_number == 1
+
+    @pytest.mark.asyncio
+    async def test_routes_to_structure_when_enabled(self):
+        """Test that process_image routes to PPStructureV3 when use_structure=True."""
+        adapter = PaddleOCRAdapter(use_structure=True)
+
+        # Mock the PPStructureV3 processing method
+        with patch.object(
+            adapter, '_process_image_with_structure',
+            new=AsyncMock(return_value=OCRPageResult(
+                page_number=1,
+                elements=[],
+                page_width=1000,
+                page_height=1000,
+                layout_info={'layout_boxes': []},
+            ))
+        ) as mock_structure_process:
+            result = await adapter.process_image("test.jpg", page_number=1)
+
+            mock_structure_process.assert_called_once_with("test.jpg", 1)
+            assert result.page_number == 1
+            assert result.layout_info is not None
+
+
+class TestOCRToLayoutMatching:
+    """Tests for matching OCR results to layout regions."""
+
+    def test_find_layout_type_for_bbox_single_match(self):
+        """Test finding layout type when bbox matches a single region."""
+        adapter = PaddleOCRAdapter()
+
+        ocr_bbox = BoundingBox(x_min=0.1, y_min=0.1, x_max=0.5, y_max=0.3)
+        layout_boxes = [
+            {'coordinate': [100, 100, 500, 300], 'label': 'title'},
+        ]
+
+        layout_type = adapter._find_layout_type_for_bbox(
+            ocr_bbox, layout_boxes, 1000, 1000
+        )
+
+        assert layout_type == 'title'
+
+    def test_find_layout_type_for_bbox_best_overlap(self):
+        """Test finding layout type when bbox overlaps multiple regions."""
+        adapter = PaddleOCRAdapter()
+
+        ocr_bbox = BoundingBox(x_min=0.2, y_min=0.2, x_max=0.6, y_max=0.6)
+        layout_boxes = [
+            {'coordinate': [0, 0, 500, 500], 'label': 'text'},  # Partial overlap
+            {'coordinate': [100, 100, 800, 800], 'label': 'table'},  # Better overlap
+        ]
+
+        layout_type = adapter._find_layout_type_for_bbox(
+            ocr_bbox, layout_boxes, 1000, 1000
+        )
+
+        assert layout_type == 'table'
+
+    def test_find_layout_type_for_bbox_no_match(self):
+        """Test default layout type when no regions match."""
+        adapter = PaddleOCRAdapter()
+
+        ocr_bbox = BoundingBox(x_min=0.9, y_min=0.9, x_max=1.0, y_max=1.0)
+        layout_boxes = [
+            {'coordinate': [0, 0, 500, 500], 'label': 'title'},
+        ]
+
+        layout_type = adapter._find_layout_type_for_bbox(
+            ocr_bbox, layout_boxes, 1000, 1000
+        )
+
+        assert layout_type == 'text'  # Default fallback
+
+    def test_match_ocr_to_layout(self):
+        """Test matching OCR results to layout classifications."""
+        adapter = PaddleOCRAdapter(min_confidence=0.5)
+
+        rec_texts = ['Title Text', 'Body paragraph']
+        rec_scores = [0.95, 0.88]
+        rec_polys = [
+            [[100, 100], [500, 100], [500, 200], [100, 200]],
+            [[100, 300], [800, 300], [800, 500], [100, 500]],
+        ]
+        layout_boxes = [
+            {'coordinate': [50, 50, 550, 250], 'label': 'title'},
+            {'coordinate': [50, 250, 850, 550], 'label': 'paragraph'},
+        ]
+
+        elements = adapter._match_ocr_to_layout(
+            rec_texts, rec_scores, rec_polys,
+            layout_boxes, 1000, 1000, page_number=1
+        )
+
+        assert len(elements) == 2
+        assert elements[0].text == 'Title Text'
+        assert elements[0].layout_type == 'title'
+        assert elements[1].text == 'Body paragraph'
+        assert elements[1].layout_type == 'paragraph'
+
+    def test_match_ocr_to_layout_confidence_filter(self):
+        """Test that low confidence results are filtered out."""
+        adapter = PaddleOCRAdapter(min_confidence=0.8)
+
+        rec_texts = ['High confidence', 'Low confidence']
+        rec_scores = [0.95, 0.6]  # Second one below threshold
+        rec_polys = [
+            [[100, 100], [500, 100], [500, 200], [100, 200]],
+            [[100, 300], [500, 300], [500, 400], [100, 400]],
+        ]
+        layout_boxes = []
+
+        elements = adapter._match_ocr_to_layout(
+            rec_texts, rec_scores, rec_polys,
+            layout_boxes, 1000, 1000, page_number=1
+        )
+
+        assert len(elements) == 1
+        assert elements[0].text == 'High confidence'
+
+
+class TestOCRTextElementWithLayout:
+    """Tests for OCRTextElement with layout_type field."""
+
+    def test_ocr_text_element_default_layout_type(self):
+        """Test that layout_type defaults to 'text' for backward compatibility."""
+        bbox = BoundingBox(
+            x_min=0.1, y_min=0.2, x_max=0.8, y_max=0.9,
+            pixel_x_min=100, pixel_y_min=200,
+            pixel_x_max=800, pixel_y_max=900,
+        )
+
+        element = OCRTextElement(
+            text="Sample text",
+            bbox=bbox,
+            confidence=0.95,
+            page_number=1,
+        )
+
+        assert element.layout_type == "text"
+
+    def test_ocr_text_element_custom_layout_type(self):
+        """Test OCRTextElement with custom layout_type."""
+        bbox = BoundingBox(
+            x_min=0.1, y_min=0.2, x_max=0.8, y_max=0.9,
+            pixel_x_min=100, pixel_y_min=200,
+            pixel_x_max=800, pixel_y_max=900,
+        )
+
+        element = OCRTextElement(
+            text="Table header",
+            bbox=bbox,
+            confidence=0.92,
+            page_number=1,
+            layout_type="table",
+        )
+
+        assert element.layout_type == "table"
+
+    def test_ocr_page_result_with_layout_info(self):
+        """Test OCRPageResult with optional layout_info."""
+        bbox = BoundingBox(
+            x_min=0.1, y_min=0.2, x_max=0.8, y_max=0.9,
+            pixel_x_min=100, pixel_y_min=200,
+            pixel_x_max=800, pixel_y_max=900,
+        )
+        element = OCRTextElement(
+            text="Test",
+            bbox=bbox,
+            confidence=0.9,
+            page_number=1,
+            layout_type="title",
+        )
+
+        layout_info = {
+            'layout_boxes': [
+                {'coordinate': [100, 200, 800, 900], 'label': 'title'}
+            ]
+        }
+
+        page_result = OCRPageResult(
+            page_number=1,
+            elements=[element],
+            page_width=1000,
+            page_height=1400,
+            layout_info=layout_info,
+        )
+
+        assert page_result.layout_info is not None
+        assert 'layout_boxes' in page_result.layout_info
+        assert page_result.elements[0].layout_type == "title"

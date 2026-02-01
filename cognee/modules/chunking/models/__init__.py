@@ -1,2 +1,3 @@
+from cognee.shared.data_models import BoundingBox
 from .DocumentChunk import DocumentChunk
-from .LayoutChunk import LayoutChunk, BoundingBox, PageDimensions, LayoutType
+from .LayoutChunk import LayoutChunk, PageDimensions, LayoutType

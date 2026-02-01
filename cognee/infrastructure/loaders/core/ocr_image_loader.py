@@ -57,14 +57,16 @@ class OcrImageLoader(LoaderInterface):
         content_parts = []
 
         for element in page_result.elements:
-            # Format: "text [page=1, bbox=(x,y,x,y), type=text, confidence=C]"
+            # Format: "text [page=1, bbox=(x,y,x,y), type=TYPE, confidence=C]"
             bbox = element.bbox
+            # Use layout_type from element (defaults to 'text')
+            layout_type = getattr(element, 'layout_type', 'text')
             formatted_line = (
                 f"{element.text} "
                 f"[page=1, "
                 f"bbox=({bbox.x_min:.3f},{bbox.y_min:.3f},"
                 f"{bbox.x_max:.3f},{bbox.y_max:.3f}), "
-                f"type=text, "
+                f"type={layout_type}, "
                 f"confidence={element.confidence:.3f}]"
             )
             content_parts.append(formatted_line)
@@ -77,6 +79,9 @@ class OcrImageLoader(LoaderInterface):
         lang: str = "en",
         use_gpu: bool = False,
         min_confidence: float = 0.5,
+        disable_llm_fallback: bool = False,
+        use_structure: bool = False,
+        structure_config: dict = None,
         **kwargs,
     ) -> str:
         """
@@ -87,6 +92,9 @@ class OcrImageLoader(LoaderInterface):
             lang: OCR language code (default: 'en')
             use_gpu: Whether to use GPU for OCR (default: False)
             min_confidence: Minimum OCR confidence threshold (default: 0.5)
+            disable_llm_fallback: Disable LLM vision fallback for testing (default: False)
+            use_structure: Whether to use PPStructureV3 for layout-aware OCR (default: False)
+            structure_config: Optional configuration dict for PPStructureV3 (default: None)
             **kwargs: Additional arguments
 
         Returns:
@@ -118,6 +126,8 @@ class OcrImageLoader(LoaderInterface):
                     lang=lang,
                     use_gpu=use_gpu,
                     min_confidence=min_confidence,
+                    use_structure=use_structure,
+                    structure_config=structure_config,
                 )
 
                 # Process image with OCR
@@ -127,11 +137,20 @@ class OcrImageLoader(LoaderInterface):
                 full_content = self._format_ocr_result(page_result, file_metadata)
 
                 if not full_content.strip():
-                    logger.warning(
-                        f"No content extracted from {file_path} with OCR, "
-                        "trying fallback to LLM vision"
-                    )
-                    return await self._fallback_to_image_loader(file_path)
+                    if disable_llm_fallback:
+                        # Return empty string for testing purposes
+                        logger.info(
+                            f"No content extracted from {file_path} with OCR "
+                            "(LLM fallback disabled for testing)"
+                        )
+                        return ""
+                    else:
+                        # Production behavior: fallback to LLM vision
+                        logger.warning(
+                            f"No content extracted from {file_path} with OCR, "
+                            "trying fallback to LLM vision"
+                        )
+                        return await self._fallback_to_image_loader(file_path)
 
                 # Store result
                 storage_config = get_storage_config()

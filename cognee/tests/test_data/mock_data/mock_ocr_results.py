@@ -1,14 +1,13 @@
 """Mock OCR results and test data generators for testing."""
 
 from typing import List, Optional
+from cognee.shared.data_models import BoundingBox
 from cognee.infrastructure.ocr.PaddleOCRAdapter import (
-    BoundingBox,
     OCRTextElement,
     OCRPageResult,
     OCRDocumentResult,
 )
 from cognee.modules.chunking.models.LayoutChunk import (
-    BoundingBox as ChunkBoundingBox,
     PageDimensions,
     LayoutType,
 )
@@ -49,9 +48,9 @@ def create_mock_chunk_bbox(
     pixel_x_max: Optional[int] = None,
     pixel_y_max: Optional[int] = None,
     confidence: float = 1.0,
-) -> ChunkBoundingBox:
-    """Generate test BoundingBox for LayoutChunk."""
-    return ChunkBoundingBox(
+) -> BoundingBox:
+    """Generate test BoundingBox for LayoutChunk (now uses shared BoundingBox)."""
+    return BoundingBox(
         x_min=x_min,
         y_min=y_min,
         x_max=x_max,

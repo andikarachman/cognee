@@ -2,8 +2,8 @@
 
 import pytest
 from pydantic import ValidationError
+from cognee.shared.data_models import BoundingBox
 from cognee.modules.chunking.models.LayoutChunk import (
-    BoundingBox,
     PageDimensions,
     LayoutType,
     LayoutChunk,

@@ -1,12 +1,135 @@
 """Data models for the cognitive architecture."""
 
 from enum import Enum, auto
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from cognee.infrastructure.llm.config import (
     get_llm_config,
 )
+
+
+class BoundingBox(BaseModel):
+    """
+    Unified bounding box for OCR, layout, and search results.
+
+    Stores both normalized (0-1 range) and optional pixel coordinates.
+    Normalized coordinates are always required for consistency across different
+    image sizes. Pixel coordinates are optional and used when available (e.g.,
+    in OCR contexts where absolute positioning is known).
+
+    Attributes:
+        x_min: Normalized x minimum (0-1 range)
+        y_min: Normalized y minimum (0-1 range)
+        x_max: Normalized x maximum (0-1 range)
+        y_max: Normalized y maximum (0-1 range)
+        pixel_x_min: Optional absolute x minimum in pixels
+        pixel_y_min: Optional absolute y minimum in pixels
+        pixel_x_max: Optional absolute x maximum in pixels
+        pixel_y_max: Optional absolute y maximum in pixels
+        confidence: Detection confidence score (0-1), defaults to 1.0
+
+    Properties:
+        area: Normalized area (0-1 range)
+        center: Center point in normalized coordinates
+        pixel_area: Pixel area if pixel coordinates available
+        pixel_center: Center point in pixels if pixel coordinates available
+
+    Example:
+        >>> # OCR context with pixel coordinates
+        >>> bbox = BoundingBox(
+        ...     x_min=0.1, y_min=0.2, x_max=0.3, y_max=0.4,
+        ...     pixel_x_min=100, pixel_y_min=200, pixel_x_max=300, pixel_y_max=400,
+        ...     confidence=0.95
+        ... )
+        >>> bbox.area
+        0.04
+        >>> bbox.pixel_area
+        40000
+
+        >>> # Search result context without pixel coordinates
+        >>> bbox = BoundingBox(x_min=0.1, y_min=0.2, x_max=0.3, y_max=0.4)
+        >>> bbox.confidence
+        1.0
+        >>> bbox.pixel_area is None
+        True
+    """
+
+    # Normalized coordinates (0-1 range) - REQUIRED
+    x_min: float = Field(..., ge=0.0, le=1.0, description="Normalized x minimum (0-1)")
+    y_min: float = Field(..., ge=0.0, le=1.0, description="Normalized y minimum (0-1)")
+    x_max: float = Field(..., ge=0.0, le=1.0, description="Normalized x maximum (0-1)")
+    y_max: float = Field(..., ge=0.0, le=1.0, description="Normalized y maximum (0-1)")
+
+    # Pixel coordinates - OPTIONAL (for OCR and layout contexts)
+    pixel_x_min: Optional[int] = Field(None, description="Absolute x minimum in pixels")
+    pixel_y_min: Optional[int] = Field(None, description="Absolute y minimum in pixels")
+    pixel_x_max: Optional[int] = Field(None, description="Absolute x maximum in pixels")
+    pixel_y_max: Optional[int] = Field(None, description="Absolute y maximum in pixels")
+
+    # Confidence score - OPTIONAL (defaults to 1.0 for backward compatibility)
+    confidence: float = Field(1.0, ge=0.0, le=1.0, description="Detection confidence (0-1)")
+
+    @model_validator(mode="after")
+    def validate_coordinate_ordering(self) -> "BoundingBox":
+        """Validate that min coordinates are less than max coordinates."""
+        if self.x_min >= self.x_max:
+            raise ValueError(f"x_min ({self.x_min}) must be less than x_max ({self.x_max})")
+        if self.y_min >= self.y_max:
+            raise ValueError(f"y_min ({self.y_min}) must be less than y_max ({self.y_max})")
+
+        # Validate pixel coords if provided
+        if self.pixel_x_min is not None and self.pixel_x_max is not None:
+            if self.pixel_x_min >= self.pixel_x_max:
+                raise ValueError(
+                    f"pixel_x_min ({self.pixel_x_min}) must be less than "
+                    f"pixel_x_max ({self.pixel_x_max})"
+                )
+        if self.pixel_y_min is not None and self.pixel_y_max is not None:
+            if self.pixel_y_min >= self.pixel_y_max:
+                raise ValueError(
+                    f"pixel_y_min ({self.pixel_y_min}) must be less than "
+                    f"pixel_y_max ({self.pixel_y_max})"
+                )
+
+        return self
+
+    @property
+    def area(self) -> float:
+        """Calculate normalized area (0-1 range)."""
+        return (self.x_max - self.x_min) * (self.y_max - self.y_min)
+
+    @property
+    def center(self) -> Tuple[float, float]:
+        """Get center point (normalized coordinates)."""
+        return ((self.x_min + self.x_max) / 2, (self.y_min + self.y_max) / 2)
+
+    @property
+    def pixel_area(self) -> Optional[int]:
+        """Calculate pixel area if pixel coordinates are available."""
+        if all([
+            self.pixel_x_min is not None,
+            self.pixel_y_min is not None,
+            self.pixel_x_max is not None,
+            self.pixel_y_max is not None
+        ]):
+            return (self.pixel_x_max - self.pixel_x_min) * (self.pixel_y_max - self.pixel_y_min)
+        return None
+
+    @property
+    def pixel_center(self) -> Optional[Tuple[int, int]]:
+        """Get center point in pixels if pixel coordinates are available."""
+        if all([
+            self.pixel_x_min is not None,
+            self.pixel_y_min is not None,
+            self.pixel_x_max is not None,
+            self.pixel_y_max is not None
+        ]):
+            return (
+                (self.pixel_x_min + self.pixel_x_max) // 2,
+                (self.pixel_y_min + self.pixel_y_max) // 2
+            )
+        return None
 
 if get_llm_config().llm_provider.lower() == "gemini":
     """

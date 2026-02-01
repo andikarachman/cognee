@@ -5,6 +5,7 @@ from cognee.infrastructure.databases.vector import get_vector_engine
 from cognee.modules.retrieval.base_retriever import BaseRetriever
 from cognee.modules.retrieval.exceptions.exceptions import NoDataError
 from cognee.infrastructure.databases.vector.exceptions.exceptions import CollectionNotFoundError
+from cognee.shared.data_models import BoundingBox
 from datetime import datetime, timezone
 
 logger = get_logger("ChunksRetriever")
@@ -38,10 +39,8 @@ class ChunksRetriever(BaseRetriever):
             or "layout_type" in payload
         )
 
-    def _extract_bbox(self, payload: dict) -> Optional[Any]:
+    def _extract_bbox(self, payload: dict) -> Optional[BoundingBox]:
         """Extract primary bounding box from payload."""
-        from cognee.modules.search.types.SearchResult import BoundingBox
-
         if "bounding_boxes" in payload and payload["bounding_boxes"]:
             # Get first bbox (primary)
             bbox_data = payload["bounding_boxes"][0]
@@ -51,7 +50,7 @@ class ChunksRetriever(BaseRetriever):
                     y_min=bbox_data.get("y_min", 0.0),
                     x_max=bbox_data.get("x_max", 1.0),
                     y_max=bbox_data.get("y_max", 1.0),
-                    confidence=bbox_data.get("confidence"),
+                    confidence=bbox_data.get("confidence", 1.0),
                 )
         return None
 

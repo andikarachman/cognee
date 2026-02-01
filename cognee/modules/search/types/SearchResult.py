@@ -1,21 +1,12 @@
 from uuid import UUID
 from pydantic import BaseModel, Field
 from typing import Any, Optional, List
+from cognee.shared.data_models import BoundingBox
 
 
 class SearchResultDataset(BaseModel):
     id: UUID
     name: str
-
-
-class BoundingBox(BaseModel):
-    """Bounding box for layout positioning."""
-
-    x_min: float = Field(..., description="Normalized x minimum (0-1)")
-    y_min: float = Field(..., description="Normalized y minimum (0-1)")
-    x_max: float = Field(..., description="Normalized x maximum (0-1)")
-    y_max: float = Field(..., description="Normalized y maximum (0-1)")
-    confidence: Optional[float] = Field(None, description="Detection confidence")
 
 
 class LayoutMetadata(BaseModel):

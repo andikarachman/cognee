@@ -2,8 +2,8 @@
 
 import pytest
 from uuid import UUID, uuid4
+from cognee.shared.data_models import BoundingBox
 from cognee.modules.search.types.SearchResult import (
-    BoundingBox,
     LayoutMetadata,
     ChunkMetadata,
     SearchResult,
@@ -28,13 +28,17 @@ class TestBoundingBoxModel:
         bbox = BoundingBox(x_min=0.1, y_min=0.2, x_max=0.8, y_max=0.9)
         json_data = bbox.model_dump()
 
-        assert json_data == {
-            "x_min": 0.1,
-            "y_min": 0.2,
-            "x_max": 0.8,
-            "y_max": 0.9,
-            "confidence": None,
-        }
+        # Confidence defaults to 1.0 in the unified BoundingBox
+        assert json_data["x_min"] == 0.1
+        assert json_data["y_min"] == 0.2
+        assert json_data["x_max"] == 0.8
+        assert json_data["y_max"] == 0.9
+        assert json_data["confidence"] == 1.0
+        # Pixel coordinates are None by default
+        assert json_data["pixel_x_min"] is None
+        assert json_data["pixel_y_min"] is None
+        assert json_data["pixel_x_max"] is None
+        assert json_data["pixel_y_max"] is None
 
 
 class TestLayoutMetadataModel:
@@ -94,13 +98,16 @@ class TestLayoutMetadataModel:
 
         json_data = layout.model_dump()
         assert json_data["page_number"] == 1
-        assert json_data["bbox"] == {
-            "x_min": 0.1,
-            "y_min": 0.2,
-            "x_max": 0.8,
-            "y_max": 0.9,
-            "confidence": None,
-        }
+        # Check bbox fields individually (unified BoundingBox includes pixel coords)
+        assert json_data["bbox"]["x_min"] == 0.1
+        assert json_data["bbox"]["y_min"] == 0.2
+        assert json_data["bbox"]["x_max"] == 0.8
+        assert json_data["bbox"]["y_max"] == 0.9
+        assert json_data["bbox"]["confidence"] == 1.0  # Default value
+        assert json_data["bbox"]["pixel_x_min"] is None
+        assert json_data["bbox"]["pixel_y_min"] is None
+        assert json_data["bbox"]["pixel_x_max"] is None
+        assert json_data["bbox"]["pixel_y_max"] is None
         assert json_data["layout_type"] == "text"
         assert json_data["confidence"] == 0.95
 

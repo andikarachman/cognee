@@ -8,6 +8,7 @@ code_pipeline_output*/
 
 # Test output files
 test_outputs/
+.test_artifacts/
 
 *.lance/
 .DS_Store

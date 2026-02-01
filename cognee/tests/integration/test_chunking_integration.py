@@ -198,10 +198,8 @@ class TestLayoutChunkSerialization:
 
     def test_layout_chunk_json_roundtrip(self):
         """Test LayoutChunk can be serialized and deserialized."""
-        from cognee.modules.chunking.models.LayoutChunk import (
-            BoundingBox,
-            LayoutType,
-        )
+        from cognee.shared.data_models import BoundingBox
+        from cognee.modules.chunking.models.LayoutChunk import LayoutType
 
         # Create LayoutChunk
         bbox = BoundingBox(
@@ -261,10 +259,8 @@ class TestVectorDBStorage:
     @pytest.mark.asyncio
     async def test_layout_chunk_vector_storage(self):
         """Test that LayoutChunk can be stored in vector DB."""
-        from cognee.modules.chunking.models.LayoutChunk import (
-            BoundingBox,
-            LayoutType,
-        )
+        from cognee.shared.data_models import BoundingBox
+        from cognee.modules.chunking.models.LayoutChunk import LayoutType
 
         # Create LayoutChunk with layout info
         bbox = BoundingBox(x_min=0.1, y_min=0.2, x_max=0.8, y_max=0.9)
@@ -297,7 +293,7 @@ class TestVectorDBStorage:
     @pytest.mark.asyncio
     async def test_layout_metadata_preserved_in_payload(self):
         """Test that layout metadata is preserved in vector DB payload."""
-        from cognee.modules.chunking.models.LayoutChunk import BoundingBox
+        from cognee.shared.data_models import BoundingBox
 
         bbox1 = BoundingBox(x_min=0.1, y_min=0.1, x_max=0.5, y_max=0.2)
         bbox2 = BoundingBox(x_min=0.1, y_min=0.3, x_max=0.5, y_max=0.4)

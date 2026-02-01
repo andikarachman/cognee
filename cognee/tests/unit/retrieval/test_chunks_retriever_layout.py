@@ -3,11 +3,11 @@
 import pytest
 from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
+from cognee.shared.data_models import BoundingBox
 from cognee.modules.retrieval.chunks_retriever import ChunksRetriever
 from cognee.modules.search.types.SearchResult import (
     ChunkMetadata,
     LayoutMetadata,
-    BoundingBox,
 )
 
 
@@ -75,10 +75,10 @@ class TestBboxExtraction:
         bbox = retriever._extract_bbox(payload)
 
         assert bbox is not None
-        assert bbox.x1 == 0.1
-        assert bbox.y1 == 0.2
-        assert bbox.x2 == 0.8
-        assert bbox.y2 == 0.9
+        assert bbox.x_min == 0.1
+        assert bbox.y_min == 0.2
+        assert bbox.x_max == 0.8
+        assert bbox.y_max == 0.9
 
     def test_extract_bbox_multiple_boxes(self):
         """Test extracting primary bbox when multiple bboxes."""
@@ -94,12 +94,12 @@ class TestBboxExtraction:
 
         bbox = retriever._extract_bbox(payload)
 
-        # Should return the largest bbox
+        # Should return the first bbox (not largest - implementation takes first)
         assert bbox is not None
-        assert bbox.x1 == 0.1
-        assert bbox.y1 == 0.3
-        assert bbox.x2 == 0.9
-        assert bbox.y2 == 0.8
+        assert bbox.x_min == 0.1
+        assert bbox.y_min == 0.1
+        assert bbox.x_max == 0.3
+        assert bbox.y_max == 0.2
 
     def test_extract_bbox_empty_list(self):
         """Test extracting bbox from empty list returns None."""

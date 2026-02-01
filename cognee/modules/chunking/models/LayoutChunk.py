@@ -4,42 +4,8 @@ from enum import Enum
 from typing import List, Optional
 from pydantic import BaseModel, Field, ConfigDict, model_validator
 from cognee.modules.data.processing.document_types import Document
+from cognee.shared.data_models import BoundingBox
 from .DocumentChunk import DocumentChunk
-
-
-class BoundingBox(BaseModel):
-    """Normalized bounding box (0-1 range) with optional pixel coordinates."""
-
-    x_min: float = Field(..., ge=0.0, le=1.0, description="Normalized x minimum (0-1)")
-    y_min: float = Field(..., ge=0.0, le=1.0, description="Normalized y minimum (0-1)")
-    x_max: float = Field(..., ge=0.0, le=1.0, description="Normalized x maximum (0-1)")
-    y_max: float = Field(..., ge=0.0, le=1.0, description="Normalized y maximum (0-1)")
-
-    pixel_x_min: Optional[int] = Field(None, description="Absolute x minimum in pixels")
-    pixel_y_min: Optional[int] = Field(None, description="Absolute y minimum in pixels")
-    pixel_x_max: Optional[int] = Field(None, description="Absolute x maximum in pixels")
-    pixel_y_max: Optional[int] = Field(None, description="Absolute y maximum in pixels")
-
-    confidence: float = Field(1.0, ge=0.0, le=1.0, description="Detection confidence")
-
-    @model_validator(mode="after")
-    def validate_coordinate_ordering(self) -> "BoundingBox":
-        """Validate that min coordinates are less than max coordinates."""
-        if self.x_min >= self.x_max:
-            raise ValueError(f"x_min ({self.x_min}) must be less than x_max ({self.x_max})")
-        if self.y_min >= self.y_max:
-            raise ValueError(f"y_min ({self.y_min}) must be less than y_max ({self.y_max})")
-        return self
-
-    @property
-    def area(self) -> float:
-        """Calculate normalized area (0-1 range)."""
-        return (self.x_max - self.x_min) * (self.y_max - self.y_min)
-
-    @property
-    def center(self) -> tuple[float, float]:
-        """Get center point (normalized coordinates)."""
-        return ((self.x_min + self.x_max) / 2, (self.y_min + self.y_max) / 2)
 
 
 class PageDimensions(BaseModel):

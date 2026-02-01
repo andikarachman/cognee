@@ -1,6 +1,6 @@
 """OCR infrastructure for document processing."""
 
-from .config import OCRConfig, get_ocr_config
+from .config import OCRConfig, get_ocr_config, is_ppstructure_available
 from .PaddleOCRAdapter import (
     BoundingBox,
     OCRTextElement,
@@ -19,6 +19,7 @@ __all__ = [
     "PaddleOCRAdapter",
     "is_paddleocr_available",
     "is_pdfplumber_available",
+    "is_ppstructure_available",
 ]
 
 
