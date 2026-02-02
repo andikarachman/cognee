@@ -4,22 +4,48 @@ from .config import OCRConfig, get_ocr_config, is_ppstructure_available
 from .PaddleOCRAdapter import (
     BoundingBox,
     OCRTextElement,
+    OCRLayoutElement,
     OCRPageResult,
     OCRDocumentResult,
     PaddleOCRAdapter,
 )
+from .models import (
+    OCRFormatType,
+    OCRBoundingBox,
+    OCRSourceInfo,
+    OCRDocumentInfo,
+    OCRTextElementOutput,
+    OCRLayoutBlockOutput,
+    OCRPageOutput,
+    OCROutputDocument,
+    OCR_FORMAT_VERSION,
+)
 
 __all__ = [
+    # Config
     "OCRConfig",
     "get_ocr_config",
-    "BoundingBox",
-    "OCRTextElement",
-    "OCRPageResult",
-    "OCRDocumentResult",
-    "PaddleOCRAdapter",
+    # Availability checks
     "is_paddleocr_available",
     "is_pdfplumber_available",
     "is_ppstructure_available",
+    # PaddleOCR adapter types
+    "BoundingBox",
+    "OCRTextElement",
+    "OCRLayoutElement",
+    "OCRPageResult",
+    "OCRDocumentResult",
+    "PaddleOCRAdapter",
+    # Structured output models
+    "OCRFormatType",
+    "OCRBoundingBox",
+    "OCRSourceInfo",
+    "OCRDocumentInfo",
+    "OCRTextElementOutput",
+    "OCRLayoutBlockOutput",
+    "OCRPageOutput",
+    "OCROutputDocument",
+    "OCR_FORMAT_VERSION",
 ]
 
 

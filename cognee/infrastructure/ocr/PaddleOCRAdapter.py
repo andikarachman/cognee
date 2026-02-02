@@ -20,13 +20,37 @@ class OCRTextElement:
 
 
 @dataclass
+class OCRLayoutElement:
+    """Layout region containing grouped OCR text elements."""
+
+    layout_type: str  # e.g., "title", "text", "table"
+    bbox: BoundingBox  # Layout box bounding box
+    text_elements: List[OCRTextElement]  # Text elements within this layout
+    confidence: Optional[float] = None  # Layout detection confidence
+    label: Optional[str] = None  # Raw label from PPStructureV3
+
+    @property
+    def combined_text(self) -> str:
+        """Get all text combined."""
+        return " ".join(elem.text for elem in self.text_elements)
+
+    @property
+    def avg_ocr_confidence(self) -> Optional[float]:
+        """Average OCR confidence of text elements."""
+        if not self.text_elements:
+            return None
+        return sum(e.confidence for e in self.text_elements) / len(self.text_elements)
+
+
+@dataclass
 class OCRPageResult:
     """OCR result for a single page."""
 
     page_number: int
-    elements: List[OCRTextElement]
+    elements: List[OCRTextElement]  # Flat list (backward compat)
     page_width: int
     page_height: int
+    layout_elements: Optional[List[OCRLayoutElement]] = None  # Grouped by layout box
     layout_info: Optional[Dict[str, Any]] = None  # PPStructureV3 raw data
 
 
@@ -51,7 +75,7 @@ class PaddleOCRAdapter:
         lang: str = "en",
         use_gpu: bool = False,
         min_confidence: float = 0.5,
-        use_structure: bool = False,
+        use_structure: bool = True,
         structure_config: Optional[Dict[str, Any]] = None,
     ):
         """
@@ -84,7 +108,7 @@ class PaddleOCRAdapter:
                 # PaddleOCR 3.x uses 'device' parameter, 2.x uses 'use_gpu'
                 try:
                     version = paddleocr.__version__
-                    major_version = int(version.split('.')[0])
+                    major_version = int(version.split(".")[0])
                 except (AttributeError, ValueError, IndexError):
                     # Default to version 3 behavior if version detection fails
                     major_version = 3
@@ -95,14 +119,18 @@ class PaddleOCRAdapter:
                 if major_version >= 3:
                     # PaddleOCR 3.x: Use 'device' parameter, no 'show_log' parameter
                     device = "gpu" if self.use_gpu else "cpu"
-                    logger.info(f"Initializing PaddleOCR v{major_version}.x with lang={self.lang}, device={device}")
+                    logger.info(
+                        f"Initializing PaddleOCR v{major_version}.x with lang={self.lang}, device={device}"
+                    )
                     self._ocr_engine = PaddleOCR(
                         lang=self.lang,
                         device=device,
                     )
                 else:
                     # PaddleOCR 2.x: Use 'use_gpu' parameter (legacy)
-                    logger.info(f"Initializing PaddleOCR v{major_version}.x with lang={self.lang}, use_gpu={self.use_gpu}")
+                    logger.info(
+                        f"Initializing PaddleOCR v{major_version}.x with lang={self.lang}, use_gpu={self.use_gpu}"
+                    )
                     self._ocr_engine = PaddleOCR(
                         lang=self.lang,
                         use_gpu=self.use_gpu,
@@ -126,8 +154,8 @@ class PaddleOCRAdapter:
                 logger.info(f"Initializing PPStructureV3 with lang={self.lang}")
 
                 init_params = {
-                    'lang': self.lang,
-                    'device': 'gpu' if self.use_gpu else 'cpu',
+                    "lang": self.lang,
+                    "device": "gpu" if self.use_gpu else "cpu",
                 }
 
                 if self.structure_config:
@@ -189,33 +217,39 @@ class PaddleOCRAdapter:
     def _map_layout_label_to_type(self, label: str) -> str:
         """Map PPStructureV3 layout label to LayoutType enum value."""
         LAYOUT_MAPPING = {
-            'text': 'text',
-            'title': 'title',
-            'paragraph title': 'heading',
-            'paragraph': 'paragraph',
-            'table': 'table',
-            'table caption': 'caption',
-            'figure': 'figure',
-            'figure caption': 'caption',
-            'image': 'figure',
-            'header': 'header',
-            'footer': 'footer',
-            'page number': 'footer',
-            'formula': 'code',
-            'formula number': 'code',
-            'reference': 'text',
-            'footnote': 'text',
-            'chart': 'figure',
-            'algorithm': 'code',
-            'seal': 'figure',
-            'list': 'list',
+            "text": "text",
+            "title": "title",
+            "paragraph title": "heading",
+            "paragraph": "paragraph",
+            "table": "table",
+            "table caption": "caption",
+            "figure": "figure",
+            "figure caption": "caption",
+            "image": "figure",
+            "header": "header",
+            "footer": "footer",
+            "page number": "footer",
+            "formula": "code",
+            "formula number": "code",
+            "reference": "text",
+            "footnote": "text",
+            "chart": "figure",
+            "algorithm": "code",
+            "seal": "figure",
+            "list": "list",
         }
-        return LAYOUT_MAPPING.get(label.lower(), 'text')
+        return LAYOUT_MAPPING.get(label.lower(), "text")
 
     def _calculate_bbox_overlap(
         self,
-        x1_min: float, y1_min: float, x1_max: float, y1_max: float,
-        x2_min: float, y2_min: float, x2_max: float, y2_max: float,
+        x1_min: float,
+        y1_min: float,
+        x1_max: float,
+        y1_max: float,
+        x2_min: float,
+        y2_min: float,
+        x2_max: float,
+        y2_max: float,
     ) -> float:
         """Calculate intersection over union (IoU) between two bboxes."""
         # Intersection
@@ -245,10 +279,10 @@ class PaddleOCRAdapter:
     ) -> str:
         """Find layout type by matching OCR bbox with layout regions."""
         max_overlap = 0
-        best_label = 'text'
+        best_label = "text"
 
         for layout_box in layout_boxes:
-            coords = layout_box.get('coordinate', [])
+            coords = layout_box.get("coordinate", [])
             if len(coords) != 4:
                 continue
 
@@ -260,13 +294,19 @@ class PaddleOCRAdapter:
 
             # Calculate overlap
             overlap = self._calculate_bbox_overlap(
-                ocr_bbox.x_min, ocr_bbox.y_min, ocr_bbox.x_max, ocr_bbox.y_max,
-                layout_x_min, layout_y_min, layout_x_max, layout_y_max,
+                ocr_bbox.x_min,
+                ocr_bbox.y_min,
+                ocr_bbox.x_max,
+                ocr_bbox.y_max,
+                layout_x_min,
+                layout_y_min,
+                layout_x_max,
+                layout_y_max,
             )
 
             if overlap > max_overlap:
                 max_overlap = overlap
-                best_label = layout_box.get('label', 'text')
+                best_label = layout_box.get("label", "text")
 
         return self._map_layout_label_to_type(best_label)
 
@@ -311,6 +351,114 @@ class PaddleOCRAdapter:
 
         return elements
 
+    def _group_ocr_by_layout(
+        self,
+        text_elements: List[OCRTextElement],
+        layout_boxes: List[Dict],
+        page_width: int,
+        page_height: int,
+    ) -> List[OCRLayoutElement]:
+        """
+        Group OCR text elements by their matched layout boxes.
+
+        Args:
+            text_elements: List of OCR text elements
+            layout_boxes: List of layout box dictionaries from PPStructureV3
+            page_width: Page width in pixels
+            page_height: Page height in pixels
+
+        Returns:
+            List of OCRLayoutElement, each containing grouped text elements
+        """
+        if not layout_boxes:
+            return []
+
+        # Initialize groups for each layout box
+        layout_groups: Dict[int, List[OCRTextElement]] = {i: [] for i in range(len(layout_boxes))}
+        unmatched_elements: List[OCRTextElement] = []
+
+        # Match each text element to its best layout box
+        for element in text_elements:
+            best_box_idx = -1
+            max_overlap = 0.0
+
+            for i, layout_box in enumerate(layout_boxes):
+                coords = layout_box.get("coordinate", [])
+                if len(coords) != 4:
+                    continue
+
+                # Normalize layout bbox
+                layout_x_min = coords[0] / page_width
+                layout_y_min = coords[1] / page_height
+                layout_x_max = coords[2] / page_width
+                layout_y_max = coords[3] / page_height
+
+                # Calculate overlap
+                overlap = self._calculate_bbox_overlap(
+                    element.bbox.x_min,
+                    element.bbox.y_min,
+                    element.bbox.x_max,
+                    element.bbox.y_max,
+                    layout_x_min,
+                    layout_y_min,
+                    layout_x_max,
+                    layout_y_max,
+                )
+
+                if overlap > max_overlap:
+                    max_overlap = overlap
+                    best_box_idx = i
+
+            if best_box_idx >= 0 and max_overlap > 0:
+                layout_groups[best_box_idx].append(element)
+            else:
+                unmatched_elements.append(element)
+
+        # Create OCRLayoutElement for each layout box with text elements
+        layout_elements = []
+        for i, layout_box in enumerate(layout_boxes):
+            elements_in_box = layout_groups[i]
+            if not elements_in_box:
+                continue  # Skip empty layout boxes
+
+            coords = layout_box.get("coordinate", [])
+            if len(coords) != 4:
+                continue
+
+            # Create normalized bbox for layout box
+            layout_bbox = BoundingBox(
+                x_min=coords[0] / page_width,
+                y_min=coords[1] / page_height,
+                x_max=coords[2] / page_width,
+                y_max=coords[3] / page_height,
+                pixel_x_min=int(coords[0]),
+                pixel_y_min=int(coords[1]),
+                pixel_x_max=int(coords[2]),
+                pixel_y_max=int(coords[3]),
+            )
+
+            raw_label = layout_box.get("label", "text")
+            layout_type = self._map_layout_label_to_type(raw_label)
+            layout_confidence = layout_box.get("score")
+
+            # Sort elements by reading order (top to bottom, left to right)
+            elements_in_box.sort(key=lambda e: (e.bbox.y_min, e.bbox.x_min))
+
+            layout_elements.append(
+                OCRLayoutElement(
+                    layout_type=layout_type,
+                    bbox=layout_bbox,
+                    text_elements=elements_in_box,
+                    confidence=layout_confidence,
+                    label=raw_label,
+                )
+            )
+
+        # Sort layout elements by reading order (top to bottom, left to right)
+        layout_elements.sort(key=lambda le: (le.bbox.y_min, le.bbox.x_min))
+
+        return layout_elements
+
     async def _process_image_with_structure(
         self,
         image_path: str,
@@ -335,33 +483,42 @@ class PaddleOCRAdapter:
 
         for res in results:
             # Access layout detection and OCR results
-            layout_res = res.get('layout_det_res', {})
-            ocr_res = res.get('overall_ocr_res', {})
+            layout_res = res.get("layout_det_res", {})
+            ocr_res = res.get("overall_ocr_res", {})
 
             # Extract layout boxes
-            layout_boxes = layout_res.get('boxes', [])
+            layout_boxes = layout_res.get("boxes", [])
 
             # Extract OCR results
-            rec_texts = ocr_res.get('rec_texts', [])
-            rec_scores = ocr_res.get('rec_scores', [])
-            rec_polys = ocr_res.get('rec_polys', [])
+            rec_texts = ocr_res.get("rec_texts", [])
+            rec_scores = ocr_res.get("rec_scores", [])
+            rec_polys = ocr_res.get("rec_polys", [])
 
             # Match OCR to layout
             elements.extend(
                 self._match_ocr_to_layout(
-                    rec_texts, rec_scores, rec_polys,
-                    layout_boxes, page_width, page_height, page_number
+                    rec_texts,
+                    rec_scores,
+                    rec_polys,
+                    layout_boxes,
+                    page_width,
+                    page_height,
+                    page_number,
                 )
             )
 
-        logger.info(f"Extracted {len(elements)} elements with layout types")
+        # Group OCR elements by layout boxes
+        layout_elements = self._group_ocr_by_layout(elements, layout_boxes, page_width, page_height)
+
+        logger.info(f"Extracted {len(elements)} elements in {len(layout_elements)} layout groups")
 
         return OCRPageResult(
             page_number=page_number,
             elements=elements,
             page_width=page_width,
             page_height=page_height,
-            layout_info={'layout_boxes': layout_boxes} if layout_boxes else None,
+            layout_elements=layout_elements if layout_elements else None,
+            layout_info={"layout_boxes": layout_boxes} if layout_boxes else None,
         )
 
     async def process_image(
@@ -415,9 +572,9 @@ class PaddleOCRAdapter:
                 if result and len(result) > 0:
                     ocr_result = result[0]
                     # Extract texts, scores, and bounding boxes
-                    rec_texts = ocr_result.get('rec_texts', [])
-                    rec_scores = ocr_result.get('rec_scores', [])
-                    rec_polys = ocr_result.get('rec_polys', ocr_result.get('dt_polys', []))
+                    rec_texts = ocr_result.get("rec_texts", [])
+                    rec_scores = ocr_result.get("rec_scores", [])
+                    rec_polys = ocr_result.get("rec_polys", ocr_result.get("dt_polys", []))
 
                     for i in range(len(rec_texts)):
                         text = rec_texts[i]
@@ -430,7 +587,7 @@ class PaddleOCRAdapter:
 
                         if bbox_coords is not None:
                             # Convert numpy array to list if needed
-                            if hasattr(bbox_coords, 'tolist'):
+                            if hasattr(bbox_coords, "tolist"):
                                 bbox_coords = bbox_coords.tolist()
 
                             bbox = self._normalize_bbox(bbox_coords, page_width, page_height)

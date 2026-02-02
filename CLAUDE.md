@@ -79,8 +79,7 @@ pip install -e ".[dev]"
 - **distributed** - Modal distributed execution
 - **dev** - All development tools (pytest, mypy, ruff, etc.)
 - **debug** - Debugpy for debugging
-- **docling** - Docling document processing
-- **gemini** - Google Gemini models
+- **ocr** - OCR support (PaddleOCR, pdfplumber) for scanned documents and images
 
 ### Testing
 ```bash
@@ -484,6 +483,47 @@ translated_chunks = await translate_content(chunks, target_language="en")
 - **Azure Translator** - Requires Azure Translator API key
 
 Implementation: `cognee/tasks/translation/`
+
+### OCR Features
+
+Cognee supports OCR for extracting text from scanned PDFs and images:
+
+```bash
+# Enable OCR (requires ocr extra: pip install cognee[ocr])
+OCR_ENABLED=true
+OCR_LANGUAGE="en"  # ISO 639-1 code (en, ch, fr, de, ar, ru, etc.)
+OCR_USE_GPU=false  # Enable for faster processing with CUDA GPU
+OCR_MIN_CONFIDENCE=0.5  # Filter low-confidence text
+OCR_FALLBACK_ON_FAILURE=true  # Fall back to PyPDF/LLM vision on failure
+
+# PPStructureV3 Layout-Aware OCR (optional, requires paddlex[ocr])
+OCR_USE_STRUCTURE=false
+OCR_STRUCTURE_USE_TABLE_RECOGNITION=true
+OCR_STRUCTURE_USE_FORMULA_RECOGNITION=false
+```
+
+**Layout Detection Model Selection:**
+
+When using layout-aware OCR (`use_structure=True`), the choice of layout detection model significantly affects results:
+- **PP-DocLayout-S** (small): Faster but may miss layout in simple documents
+- **PP-DocLayout-L** (large): More reliable layout detection, recommended for production use
+
+For reliable layout detection, use `PP-DocLayout-L` or larger:
+```python
+await cognee.add(
+    image_path,
+    preferred_loaders={
+        "ocr_image_loader": {
+            "use_structure": True,
+            "structure_config": {
+                "layout_detection_model_name": "PP-DocLayout-L",  # Recommended
+                "use_table_recognition": True,
+                "use_formula_recognition": False,
+            }
+        }
+    }
+)
+```
 
 ### Data Cleanup Features
 

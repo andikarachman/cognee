@@ -166,13 +166,16 @@ async def add(
 
     """
     if preferred_loaders is not None:
-        transformed = {}
-        for item in preferred_loaders:
-            if isinstance(item, dict):
-                transformed.update(item)
-            else:
-                transformed[item] = {}
-        preferred_loaders = transformed
+        if isinstance(preferred_loaders, dict):                           
+          pass           
+        else:
+            transformed = {}
+            for item in preferred_loaders:
+                if isinstance(item, dict):
+                    transformed.update(item)
+                else:
+                    transformed[item] = {}
+            preferred_loaders = transformed
 
     tasks = [
         Task(resolve_data_directories, include_subdirectories=True),

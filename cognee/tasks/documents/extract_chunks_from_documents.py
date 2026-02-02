@@ -33,6 +33,11 @@ async def _detect_ocr_metadata(document: Document) -> bool:
     """
     Detect if document contains OCR/layout metadata.
 
+    Supports detection of:
+    1. JSON format: {"cognee_ocr_format": "1.0", ...}
+    2. Legacy block format: [LAYOUT:...][/LAYOUT]
+    3. Legacy flat format: [page=N, bbox=...]
+
     Args:
         document: Document to check
 
@@ -43,12 +48,23 @@ async def _detect_ocr_metadata(document: Document) -> bool:
         from cognee.infrastructure.files.utils.open_data_file import open_data_file
 
         # Read first 2000 characters to check for metadata
-        async with open_data_file(
-            document.raw_data_location, mode="r", encoding="utf-8"
-        ) as file:
-            text_preview = await file.read(2000)
-            # Check for OCR metadata markers: [page=N, bbox=(x,y,x,y)]
-            return "[page=" in text_preview and "bbox=" in text_preview
+        async with open_data_file(document.raw_data_location, mode="r", encoding="utf-8") as file:
+            text_preview = file.read(2000)
+
+            # Check for JSON format (new structured format)
+            stripped = text_preview.strip()
+            if stripped.startswith("{") and '"cognee_ocr_format"' in text_preview:
+                return True
+
+            # Check for legacy formats
+            has_page = "[page=" in text_preview
+            has_bbox = "bbox=" in text_preview
+
+            # Also check for legacy block format markers
+            has_layout_block = "[LAYOUT:" in text_preview and "[/LAYOUT]" in text_preview
+
+            return (has_page and has_bbox) or has_layout_block
+
     except Exception as e:
         logger.debug(f"Could not detect OCR metadata: {e}")
         return False
@@ -65,6 +81,11 @@ async def extract_chunks_from_documents(
 
     Automatically detects OCR/layout metadata and uses LayoutTextChunker when present
     (unless auto_detect_layout=False).
+
+    Supports three OCR metadata formats:
+    1. JSON format (new): {"cognee_ocr_format": "1.0", ...}
+    2. Legacy block format: [LAYOUT:...][/LAYOUT]
+    3. Legacy flat format: [page=N, bbox=...]
 
     Args:
         documents: List of documents to chunk
@@ -97,8 +118,7 @@ async def extract_chunks_from_documents(
             has_ocr = await _detect_ocr_metadata(document)
             if has_ocr:
                 logger.info(
-                    f"OCR metadata detected in document {document.id}, "
-                    "using LayoutTextChunker"
+                    f"OCR metadata detected in document {document.id}, using LayoutTextChunker"
                 )
                 try:
                     from cognee.modules.chunking.LayoutTextChunker import (
@@ -107,9 +127,7 @@ async def extract_chunks_from_documents(
 
                     selected_chunker = LayoutTextChunker
                 except ImportError:
-                    logger.warning(
-                        "LayoutTextChunker not available, using default chunker"
-                    )
+                    logger.warning("LayoutTextChunker not available, using default chunker")
 
         async for document_chunk in document.read(
             max_chunk_size=max_chunk_size, chunker_cls=selected_chunker

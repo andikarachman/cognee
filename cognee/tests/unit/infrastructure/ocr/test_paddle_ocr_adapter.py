@@ -6,9 +6,21 @@ from pathlib import Path
 from cognee.shared.data_models import BoundingBox
 from cognee.infrastructure.ocr.PaddleOCRAdapter import (
     OCRTextElement,
+    OCRLayoutElement,
     OCRPageResult,
     OCRDocumentResult,
     PaddleOCRAdapter,
+)
+from cognee.infrastructure.ocr.models import (
+    OCRFormatType,
+    OCRBoundingBox,
+    OCRSourceInfo,
+    OCRDocumentInfo,
+    OCRTextElementOutput,
+    OCRLayoutBlockOutput,
+    OCRPageOutput,
+    OCROutputDocument,
+    OCR_FORMAT_VERSION,
 )
 
 
@@ -746,3 +758,612 @@ class TestOCRTextElementWithLayout:
         assert page_result.layout_info is not None
         assert 'layout_boxes' in page_result.layout_info
         assert page_result.elements[0].layout_type == "title"
+
+
+class TestOCRLayoutElement:
+    """Tests for OCRLayoutElement dataclass."""
+
+    def test_ocr_layout_element_creation(self):
+        """Test OCRLayoutElement creation with text elements."""
+        bbox = BoundingBox(
+            x_min=0.1, y_min=0.1, x_max=0.9, y_max=0.3,
+            pixel_x_min=100, pixel_y_min=100,
+            pixel_x_max=900, pixel_y_max=300,
+        )
+        text_bbox = BoundingBox(
+            x_min=0.15, y_min=0.15, x_max=0.85, y_max=0.25,
+            pixel_x_min=150, pixel_y_min=150,
+            pixel_x_max=850, pixel_y_max=250,
+        )
+        text_elem = OCRTextElement(
+            text="Sample text",
+            bbox=text_bbox,
+            confidence=0.95,
+            page_number=1,
+            layout_type="title",
+        )
+
+        layout_elem = OCRLayoutElement(
+            layout_type="title",
+            bbox=bbox,
+            text_elements=[text_elem],
+            confidence=0.92,
+            label="title",
+        )
+
+        assert layout_elem.layout_type == "title"
+        assert layout_elem.confidence == 0.92
+        assert layout_elem.label == "title"
+        assert len(layout_elem.text_elements) == 1
+        assert layout_elem.text_elements[0].text == "Sample text"
+
+    def test_ocr_layout_element_combined_text(self):
+        """Test combined_text property."""
+        bbox = BoundingBox(x_min=0.1, y_min=0.1, x_max=0.9, y_max=0.5)
+        text_elem1 = OCRTextElement(
+            text="First line",
+            bbox=BoundingBox(x_min=0.1, y_min=0.1, x_max=0.9, y_max=0.2),
+            confidence=0.95,
+            page_number=1,
+        )
+        text_elem2 = OCRTextElement(
+            text="Second line",
+            bbox=BoundingBox(x_min=0.1, y_min=0.25, x_max=0.9, y_max=0.35),
+            confidence=0.92,
+            page_number=1,
+        )
+
+        layout_elem = OCRLayoutElement(
+            layout_type="text",
+            bbox=bbox,
+            text_elements=[text_elem1, text_elem2],
+        )
+
+        assert layout_elem.combined_text == "First line Second line"
+
+    def test_ocr_layout_element_avg_confidence(self):
+        """Test avg_ocr_confidence property."""
+        bbox = BoundingBox(x_min=0.1, y_min=0.1, x_max=0.9, y_max=0.5)
+        text_elem1 = OCRTextElement(
+            text="First",
+            bbox=BoundingBox(x_min=0.1, y_min=0.1, x_max=0.5, y_max=0.2),
+            confidence=0.90,
+            page_number=1,
+        )
+        text_elem2 = OCRTextElement(
+            text="Second",
+            bbox=BoundingBox(x_min=0.1, y_min=0.25, x_max=0.5, y_max=0.35),
+            confidence=0.80,
+            page_number=1,
+        )
+
+        layout_elem = OCRLayoutElement(
+            layout_type="text",
+            bbox=bbox,
+            text_elements=[text_elem1, text_elem2],
+        )
+
+        assert layout_elem.avg_ocr_confidence == pytest.approx(0.85)
+
+    def test_ocr_layout_element_empty_text_elements(self):
+        """Test properties with no text elements."""
+        bbox = BoundingBox(x_min=0.1, y_min=0.1, x_max=0.9, y_max=0.5)
+
+        layout_elem = OCRLayoutElement(
+            layout_type="figure",
+            bbox=bbox,
+            text_elements=[],
+        )
+
+        assert layout_elem.combined_text == ""
+        assert layout_elem.avg_ocr_confidence is None
+
+
+class TestGroupOCRByLayout:
+    """Tests for _group_ocr_by_layout method."""
+
+    def test_group_ocr_by_layout_single_box(self):
+        """Test grouping when all elements match a single layout box."""
+        adapter = PaddleOCRAdapter()
+
+        text_elem1 = OCRTextElement(
+            text="Title text",
+            bbox=BoundingBox(x_min=0.15, y_min=0.15, x_max=0.85, y_max=0.25),
+            confidence=0.95,
+            page_number=1,
+            layout_type="title",
+        )
+
+        layout_boxes = [
+            {'coordinate': [100, 100, 900, 300], 'label': 'title', 'score': 0.92},
+        ]
+
+        layout_elements = adapter._group_ocr_by_layout(
+            [text_elem1], layout_boxes, 1000, 1000
+        )
+
+        assert len(layout_elements) == 1
+        assert layout_elements[0].layout_type == "title"
+        assert layout_elements[0].confidence == 0.92
+        assert len(layout_elements[0].text_elements) == 1
+        assert layout_elements[0].text_elements[0].text == "Title text"
+
+    def test_group_ocr_by_layout_multiple_boxes(self):
+        """Test grouping with multiple layout boxes."""
+        adapter = PaddleOCRAdapter()
+
+        title_elem = OCRTextElement(
+            text="Document Title",
+            bbox=BoundingBox(x_min=0.1, y_min=0.05, x_max=0.9, y_max=0.1),
+            confidence=0.95,
+            page_number=1,
+            layout_type="title",
+        )
+        para1_elem = OCRTextElement(
+            text="First paragraph text",
+            bbox=BoundingBox(x_min=0.1, y_min=0.15, x_max=0.9, y_max=0.25),
+            confidence=0.92,
+            page_number=1,
+            layout_type="text",
+        )
+        para2_elem = OCRTextElement(
+            text="Second paragraph text",
+            bbox=BoundingBox(x_min=0.1, y_min=0.3, x_max=0.9, y_max=0.4),
+            confidence=0.90,
+            page_number=1,
+            layout_type="text",
+        )
+
+        layout_boxes = [
+            {'coordinate': [50, 30, 950, 120], 'label': 'title', 'score': 0.95},
+            {'coordinate': [50, 130, 950, 280], 'label': 'paragraph', 'score': 0.88},
+            {'coordinate': [50, 280, 950, 450], 'label': 'paragraph', 'score': 0.87},
+        ]
+
+        layout_elements = adapter._group_ocr_by_layout(
+            [title_elem, para1_elem, para2_elem], layout_boxes, 1000, 1000
+        )
+
+        assert len(layout_elements) == 3
+        # Sorted by reading order (top to bottom)
+        assert layout_elements[0].layout_type == "title"
+        assert layout_elements[0].combined_text == "Document Title"
+        assert layout_elements[1].layout_type == "paragraph"
+        assert layout_elements[1].combined_text == "First paragraph text"
+        assert layout_elements[2].layout_type == "paragraph"
+        assert layout_elements[2].combined_text == "Second paragraph text"
+
+    def test_group_ocr_by_layout_multiple_elements_per_box(self):
+        """Test grouping multiple text elements into one layout box."""
+        adapter = PaddleOCRAdapter()
+
+        line1 = OCRTextElement(
+            text="Line one",
+            bbox=BoundingBox(x_min=0.1, y_min=0.1, x_max=0.9, y_max=0.15),
+            confidence=0.95,
+            page_number=1,
+        )
+        line2 = OCRTextElement(
+            text="Line two",
+            bbox=BoundingBox(x_min=0.1, y_min=0.17, x_max=0.9, y_max=0.22),
+            confidence=0.93,
+            page_number=1,
+        )
+        line3 = OCRTextElement(
+            text="Line three",
+            bbox=BoundingBox(x_min=0.1, y_min=0.24, x_max=0.9, y_max=0.29),
+            confidence=0.91,
+            page_number=1,
+        )
+
+        layout_boxes = [
+            {'coordinate': [50, 50, 950, 350], 'label': 'text', 'score': 0.90},
+        ]
+
+        layout_elements = adapter._group_ocr_by_layout(
+            [line1, line2, line3], layout_boxes, 1000, 1000
+        )
+
+        assert len(layout_elements) == 1
+        assert len(layout_elements[0].text_elements) == 3
+        assert layout_elements[0].combined_text == "Line one Line two Line three"
+        assert layout_elements[0].avg_ocr_confidence == pytest.approx(0.93, abs=0.01)
+
+    def test_group_ocr_by_layout_empty_layout_boxes(self):
+        """Test with no layout boxes returns empty list."""
+        adapter = PaddleOCRAdapter()
+
+        text_elem = OCRTextElement(
+            text="Orphan text",
+            bbox=BoundingBox(x_min=0.1, y_min=0.1, x_max=0.9, y_max=0.2),
+            confidence=0.95,
+            page_number=1,
+        )
+
+        layout_elements = adapter._group_ocr_by_layout(
+            [text_elem], [], 1000, 1000
+        )
+
+        assert len(layout_elements) == 0
+
+    def test_group_ocr_by_layout_reading_order(self):
+        """Test that elements within a box are sorted by reading order."""
+        adapter = PaddleOCRAdapter()
+
+        # Add elements out of order
+        line3 = OCRTextElement(
+            text="Third",
+            bbox=BoundingBox(x_min=0.1, y_min=0.4, x_max=0.9, y_max=0.45),
+            confidence=0.90,
+            page_number=1,
+        )
+        line1 = OCRTextElement(
+            text="First",
+            bbox=BoundingBox(x_min=0.1, y_min=0.1, x_max=0.9, y_max=0.15),
+            confidence=0.95,
+            page_number=1,
+        )
+        line2 = OCRTextElement(
+            text="Second",
+            bbox=BoundingBox(x_min=0.1, y_min=0.25, x_max=0.9, y_max=0.3),
+            confidence=0.93,
+            page_number=1,
+        )
+
+        layout_boxes = [
+            {'coordinate': [50, 50, 950, 500], 'label': 'text', 'score': 0.90},
+        ]
+
+        layout_elements = adapter._group_ocr_by_layout(
+            [line3, line1, line2], layout_boxes, 1000, 1000
+        )
+
+        assert len(layout_elements) == 1
+        # Should be sorted by y_min (reading order)
+        assert layout_elements[0].text_elements[0].text == "First"
+        assert layout_elements[0].text_elements[1].text == "Second"
+        assert layout_elements[0].text_elements[2].text == "Third"
+
+
+class TestOCRPageResultWithLayoutElements:
+    """Tests for OCRPageResult with layout_elements field."""
+
+    def test_page_result_with_layout_elements(self):
+        """Test OCRPageResult with layout_elements populated."""
+        text_elem = OCRTextElement(
+            text="Test text",
+            bbox=BoundingBox(x_min=0.1, y_min=0.1, x_max=0.9, y_max=0.2),
+            confidence=0.95,
+            page_number=1,
+            layout_type="text",
+        )
+        layout_elem = OCRLayoutElement(
+            layout_type="text",
+            bbox=BoundingBox(x_min=0.05, y_min=0.05, x_max=0.95, y_max=0.25),
+            text_elements=[text_elem],
+            confidence=0.90,
+        )
+
+        page_result = OCRPageResult(
+            page_number=1,
+            elements=[text_elem],
+            page_width=1000,
+            page_height=1400,
+            layout_elements=[layout_elem],
+        )
+
+        assert page_result.layout_elements is not None
+        assert len(page_result.layout_elements) == 1
+        assert page_result.layout_elements[0].layout_type == "text"
+        # Backward compat: elements still populated
+        assert len(page_result.elements) == 1
+
+    def test_page_result_without_layout_elements(self):
+        """Test OCRPageResult without layout_elements (backward compat)."""
+        text_elem = OCRTextElement(
+            text="Test text",
+            bbox=BoundingBox(x_min=0.1, y_min=0.1, x_max=0.9, y_max=0.2),
+            confidence=0.95,
+            page_number=1,
+        )
+
+        page_result = OCRPageResult(
+            page_number=1,
+            elements=[text_elem],
+            page_width=1000,
+            page_height=1400,
+        )
+
+        assert page_result.layout_elements is None
+        assert len(page_result.elements) == 1
+
+
+class TestOCROutputModels:
+    """Tests for structured OCR output models."""
+
+    def test_ocr_format_version(self):
+        """Test OCR format version constant."""
+        assert OCR_FORMAT_VERSION == "1.0"
+
+    def test_ocr_format_type_enum(self):
+        """Test OCRFormatType enum values."""
+        assert OCRFormatType.BLOCK.value == "block"
+        assert OCRFormatType.FLAT.value == "flat"
+
+    def test_ocr_bounding_box_creation(self):
+        """Test OCRBoundingBox creation."""
+        bbox = OCRBoundingBox(x_min=0.1, y_min=0.2, x_max=0.8, y_max=0.9)
+        assert bbox.x_min == 0.1
+        assert bbox.y_min == 0.2
+        assert bbox.x_max == 0.8
+        assert bbox.y_max == 0.9
+
+    def test_ocr_source_info_creation(self):
+        """Test OCRSourceInfo creation with defaults."""
+        source = OCRSourceInfo(loader="ocr_image_loader")
+        assert source.loader == "ocr_image_loader"
+        assert source.ocr_engine == "paddleocr"
+        assert source.use_structure is False
+        assert source.timestamp is not None
+
+    def test_ocr_source_info_custom(self):
+        """Test OCRSourceInfo with custom values."""
+        source = OCRSourceInfo(
+            loader="ocr_pdf_loader",
+            ocr_engine="tesseract",
+            timestamp="2025-01-15T10:30:00Z",
+            use_structure=True,
+        )
+        assert source.loader == "ocr_pdf_loader"
+        assert source.ocr_engine == "tesseract"
+        assert source.use_structure is True
+
+    def test_ocr_document_info_creation(self):
+        """Test OCRDocumentInfo creation."""
+        doc_info = OCRDocumentInfo(
+            total_pages=5,
+            content_hash="abc123def456",
+            source_filename="test.pdf",
+        )
+        assert doc_info.total_pages == 5
+        assert doc_info.content_hash == "abc123def456"
+        assert doc_info.source_filename == "test.pdf"
+
+    def test_ocr_text_element_output_creation(self):
+        """Test OCRTextElementOutput creation."""
+        bbox = OCRBoundingBox(x_min=0.1, y_min=0.2, x_max=0.8, y_max=0.3)
+        elem = OCRTextElementOutput(
+            text="Hello world",
+            bbox=bbox,
+            confidence=0.95,
+            layout_type="title",
+        )
+        assert elem.text == "Hello world"
+        assert elem.confidence == 0.95
+        assert elem.layout_type == "title"
+
+    def test_ocr_layout_block_output_creation(self):
+        """Test OCRLayoutBlockOutput creation."""
+        bbox = OCRBoundingBox(x_min=0.1, y_min=0.1, x_max=0.9, y_max=0.3)
+        elem_bbox = OCRBoundingBox(x_min=0.15, y_min=0.15, x_max=0.85, y_max=0.25)
+        elem = OCRTextElementOutput(
+            text="Block text",
+            bbox=elem_bbox,
+            confidence=0.95,
+        )
+        block = OCRLayoutBlockOutput(
+            layout_type="paragraph",
+            bbox=bbox,
+            confidence=0.92,
+            elements=[elem],
+        )
+        assert block.layout_type == "paragraph"
+        assert block.confidence == 0.92
+        assert len(block.elements) == 1
+        assert block.elements[0].text == "Block text"
+
+    def test_ocr_page_output_block_format(self):
+        """Test OCRPageOutput with block format."""
+        bbox = OCRBoundingBox(x_min=0.1, y_min=0.1, x_max=0.9, y_max=0.3)
+        block = OCRLayoutBlockOutput(
+            layout_type="text",
+            bbox=bbox,
+            elements=[],
+        )
+        page = OCRPageOutput(
+            page_number=1,
+            width=1000,
+            height=1400,
+            layout_blocks=[block],
+        )
+        assert page.page_number == 1
+        assert page.width == 1000
+        assert page.height == 1400
+        assert len(page.layout_blocks) == 1
+        assert page.elements is None
+
+    def test_ocr_page_output_flat_format(self):
+        """Test OCRPageOutput with flat format."""
+        elem_bbox = OCRBoundingBox(x_min=0.1, y_min=0.1, x_max=0.9, y_max=0.15)
+        elem = OCRTextElementOutput(
+            text="Flat text",
+            bbox=elem_bbox,
+            confidence=0.95,
+        )
+        page = OCRPageOutput(
+            page_number=1,
+            width=1000,
+            height=1400,
+            elements=[elem],
+        )
+        assert page.page_number == 1
+        assert len(page.elements) == 1
+        assert page.layout_blocks is None
+
+    def test_ocr_output_document_creation(self):
+        """Test OCROutputDocument creation."""
+        source = OCRSourceInfo(loader="ocr_image_loader")
+        doc_info = OCRDocumentInfo(total_pages=1)
+        page = OCRPageOutput(
+            page_number=1,
+            width=1000,
+            height=1400,
+            elements=[
+                OCRTextElementOutput(
+                    text="Hello",
+                    bbox=OCRBoundingBox(x_min=0.1, y_min=0.1, x_max=0.5, y_max=0.15),
+                    confidence=0.95,
+                )
+            ],
+        )
+
+        output = OCROutputDocument(
+            format_type=OCRFormatType.FLAT,
+            source=source,
+            document=doc_info,
+            pages=[page],
+            plain_text="Hello",
+        )
+
+        assert output.cognee_ocr_format == "1.0"
+        assert output.format_type == OCRFormatType.FLAT
+        assert output.plain_text == "Hello"
+        assert len(output.pages) == 1
+
+    def test_ocr_output_document_get_all_text_elements(self):
+        """Test get_all_text_elements method."""
+        elem1 = OCRTextElementOutput(
+            text="First",
+            bbox=OCRBoundingBox(x_min=0.1, y_min=0.1, x_max=0.5, y_max=0.15),
+            confidence=0.95,
+        )
+        elem2 = OCRTextElementOutput(
+            text="Second",
+            bbox=OCRBoundingBox(x_min=0.1, y_min=0.2, x_max=0.5, y_max=0.25),
+            confidence=0.93,
+        )
+        page = OCRPageOutput(
+            page_number=1,
+            elements=[elem1, elem2],
+        )
+        output = OCROutputDocument(
+            format_type=OCRFormatType.FLAT,
+            source=OCRSourceInfo(loader="test"),
+            document=OCRDocumentInfo(total_pages=1),
+            pages=[page],
+            plain_text="First Second",
+        )
+
+        all_elements = output.get_all_text_elements()
+        assert len(all_elements) == 2
+        assert all_elements[0].text == "First"
+        assert all_elements[1].text == "Second"
+
+    def test_ocr_output_document_get_text_by_page(self):
+        """Test get_text_by_page method."""
+        page1 = OCRPageOutput(
+            page_number=1,
+            elements=[
+                OCRTextElementOutput(
+                    text="Page 1 text",
+                    bbox=OCRBoundingBox(x_min=0.1, y_min=0.1, x_max=0.5, y_max=0.15),
+                    confidence=0.95,
+                )
+            ],
+        )
+        page2 = OCRPageOutput(
+            page_number=2,
+            elements=[
+                OCRTextElementOutput(
+                    text="Page 2 text",
+                    bbox=OCRBoundingBox(x_min=0.1, y_min=0.1, x_max=0.5, y_max=0.15),
+                    confidence=0.93,
+                )
+            ],
+        )
+        output = OCROutputDocument(
+            format_type=OCRFormatType.FLAT,
+            source=OCRSourceInfo(loader="test"),
+            document=OCRDocumentInfo(total_pages=2),
+            pages=[page1, page2],
+            plain_text="Page 1 text Page 2 text",
+        )
+
+        assert output.get_text_by_page(1) == "Page 1 text"
+        assert output.get_text_by_page(2) == "Page 2 text"
+        assert output.get_text_by_page(3) == ""  # Non-existent page
+
+    def test_ocr_output_document_block_format_get_all_elements(self):
+        """Test get_all_text_elements with block format."""
+        elem1 = OCRTextElementOutput(
+            text="Block 1 text",
+            bbox=OCRBoundingBox(x_min=0.1, y_min=0.1, x_max=0.5, y_max=0.15),
+            confidence=0.95,
+        )
+        elem2 = OCRTextElementOutput(
+            text="Block 2 text",
+            bbox=OCRBoundingBox(x_min=0.1, y_min=0.2, x_max=0.5, y_max=0.25),
+            confidence=0.93,
+        )
+        block1 = OCRLayoutBlockOutput(
+            layout_type="title",
+            bbox=OCRBoundingBox(x_min=0.05, y_min=0.05, x_max=0.95, y_max=0.18),
+            elements=[elem1],
+        )
+        block2 = OCRLayoutBlockOutput(
+            layout_type="text",
+            bbox=OCRBoundingBox(x_min=0.05, y_min=0.18, x_max=0.95, y_max=0.3),
+            elements=[elem2],
+        )
+        page = OCRPageOutput(
+            page_number=1,
+            layout_blocks=[block1, block2],
+        )
+        output = OCROutputDocument(
+            format_type=OCRFormatType.BLOCK,
+            source=OCRSourceInfo(loader="test"),
+            document=OCRDocumentInfo(total_pages=1),
+            pages=[page],
+            plain_text="Block 1 text Block 2 text",
+        )
+
+        all_elements = output.get_all_text_elements()
+        assert len(all_elements) == 2
+        assert all_elements[0].text == "Block 1 text"
+        assert all_elements[1].text == "Block 2 text"
+
+    def test_ocr_output_document_to_dict(self):
+        """Test that OCROutputDocument can be serialized to dict."""
+        source = OCRSourceInfo(
+            loader="ocr_image_loader",
+            timestamp="2025-01-15T10:30:00Z",
+        )
+        doc_info = OCRDocumentInfo(total_pages=1, content_hash="abc123")
+        page = OCRPageOutput(
+            page_number=1,
+            width=1000,
+            height=1400,
+            elements=[
+                OCRTextElementOutput(
+                    text="Test",
+                    bbox=OCRBoundingBox(x_min=0.1, y_min=0.1, x_max=0.5, y_max=0.15),
+                    confidence=0.95,
+                )
+            ],
+        )
+
+        output = OCROutputDocument(
+            format_type=OCRFormatType.FLAT,
+            source=source,
+            document=doc_info,
+            pages=[page],
+            plain_text="Test",
+        )
+
+        output_dict = output.model_dump()
+        assert output_dict["cognee_ocr_format"] == "1.0"
+        assert output_dict["format_type"] == "flat"
+        assert output_dict["source"]["loader"] == "ocr_image_loader"
+        assert output_dict["document"]["content_hash"] == "abc123"
+        assert len(output_dict["pages"]) == 1
+        assert output_dict["plain_text"] == "Test"

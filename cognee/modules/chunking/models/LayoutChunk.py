@@ -106,6 +106,18 @@ class LayoutChunk(DocumentChunk):
         description="Column index for multi-column layouts",
     )
 
+    layout_bbox: Optional[BoundingBox] = Field(
+        None,
+        description="Bounding box of the containing layout block (from PPStructureV3)",
+    )
+
+    layout_confidence: Optional[float] = Field(
+        None,
+        ge=0.0,
+        le=1.0,
+        description="Confidence score of the layout detection",
+    )
+
     @property
     def primary_bbox(self) -> Optional[BoundingBox]:
         """

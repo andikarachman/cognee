@@ -1,5 +1,7 @@
 """Image loader with OCR support."""
 
+import json
+from datetime import datetime, timezone
 from typing import List
 from cognee.infrastructure.loaders.LoaderInterface import LoaderInterface
 from cognee.shared.logging_utils import get_logger
@@ -16,6 +18,8 @@ class OcrImageLoader(LoaderInterface):
     Uses PaddleOCR to extract text and bounding boxes from images
     (PNG, JPG, JPEG, TIFF, BMP, etc.). Falls back to ImageLoader
     (LLM vision) if OCR fails or returns empty results.
+
+    Output is stored as structured JSON with cognee_ocr_format header.
     """
 
     @property
@@ -43,35 +47,145 @@ class OcrImageLoader(LoaderInterface):
             return True
         return False
 
-    def _format_ocr_result(self, page_result, file_metadata: dict) -> str:
+    def _extract_plain_text(self, page_result) -> str:
         """
-        Format OCR result as text with inline bbox metadata.
+        Extract clean plain text from OCR result.
+
+        Args:
+            page_result: OCRPageResult from PaddleOCRAdapter
+
+        Returns:
+            Plain text content without metadata
+        """
+        texts = []
+
+        # Use layout_elements if available (layout-aware mode)
+        if page_result.layout_elements:
+            for layout_elem in page_result.layout_elements:
+                for element in layout_elem.text_elements:
+                    texts.append(element.text)
+        else:
+            # Use flat elements
+            for element in page_result.elements:
+                texts.append(element.text)
+
+        return " ".join(texts)
+
+    def _build_ocr_output(
+        self,
+        page_result,
+        file_metadata: dict,
+        use_structure: bool = False,
+    ) -> dict:
+        """
+        Build structured OCR output document.
 
         Args:
             page_result: OCRPageResult from PaddleOCRAdapter
             file_metadata: File metadata dictionary
+            use_structure: Whether layout-aware OCR was used
 
         Returns:
-            Formatted text content with bbox metadata
+            Dictionary conforming to OCROutputDocument schema
         """
-        content_parts = []
+        from cognee.infrastructure.ocr.models import (
+            OCRFormatType,
+            OCR_FORMAT_VERSION,
+        )
 
-        for element in page_result.elements:
-            # Format: "text [page=1, bbox=(x,y,x,y), type=TYPE, confidence=C]"
-            bbox = element.bbox
-            # Use layout_type from element (defaults to 'text')
-            layout_type = getattr(element, 'layout_type', 'text')
-            formatted_line = (
-                f"{element.text} "
-                f"[page=1, "
-                f"bbox=({bbox.x_min:.3f},{bbox.y_min:.3f},"
-                f"{bbox.x_max:.3f},{bbox.y_max:.3f}), "
-                f"type={layout_type}, "
-                f"confidence={element.confidence:.3f}]"
-            )
-            content_parts.append(formatted_line)
+        # Determine format type based on whether layout_elements are present
+        has_layout = (
+            page_result.layout_elements is not None and len(page_result.layout_elements) > 0
+        )
+        format_type = OCRFormatType.BLOCK if has_layout else OCRFormatType.FLAT
 
-        return "\n".join(content_parts)
+        # Build source info
+        source = {
+            "loader": self.loader_name,
+            "ocr_engine": "paddleocr",
+            "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "use_structure": use_structure,
+        }
+
+        # Build document info
+        document = {
+            "total_pages": 1,
+            "content_hash": file_metadata.get("content_hash"),
+            "source_filename": file_metadata.get("name"),
+        }
+
+        # Build page output
+        page_output = {
+            "page_number": page_result.page_number,
+            "width": page_result.page_width,
+            "height": page_result.page_height,
+        }
+
+        if has_layout:
+            # Block format with layout blocks
+            layout_blocks = []
+            for layout_elem in page_result.layout_elements:
+                block = {
+                    "layout_type": layout_elem.layout_type,
+                    "bbox": {
+                        "x_min": layout_elem.bbox.x_min,
+                        "y_min": layout_elem.bbox.y_min,
+                        "x_max": layout_elem.bbox.x_max,
+                        "y_max": layout_elem.bbox.y_max,
+                    },
+                    "confidence": layout_elem.confidence,
+                    "elements": [],
+                }
+
+                for elem in layout_elem.text_elements:
+                    block["elements"].append(
+                        {
+                            "text": elem.text,
+                            "bbox": {
+                                "x_min": elem.bbox.x_min,
+                                "y_min": elem.bbox.y_min,
+                                "x_max": elem.bbox.x_max,
+                                "y_max": elem.bbox.y_max,
+                            },
+                            "confidence": elem.confidence,
+                            "layout_type": elem.layout_type,
+                        }
+                    )
+
+                layout_blocks.append(block)
+
+            page_output["layout_blocks"] = layout_blocks
+        else:
+            # Flat format with elements
+            elements = []
+            for elem in page_result.elements:
+                elements.append(
+                    {
+                        "text": elem.text,
+                        "bbox": {
+                            "x_min": elem.bbox.x_min,
+                            "y_min": elem.bbox.y_min,
+                            "x_max": elem.bbox.x_max,
+                            "y_max": elem.bbox.y_max,
+                        },
+                        "confidence": elem.confidence,
+                        "layout_type": getattr(elem, "layout_type", "text"),
+                    }
+                )
+
+            page_output["elements"] = elements
+
+        # Extract plain text for embedding
+        plain_text = self._extract_plain_text(page_result)
+
+        return {
+            "cognee_ocr_format": OCR_FORMAT_VERSION,
+            "format_type": format_type.value,
+            "source": source,
+            "document": document,
+            "pages": [page_output],
+            "plain_text": plain_text,
+        }
 
     async def load(
         self,
@@ -80,7 +194,7 @@ class OcrImageLoader(LoaderInterface):
         use_gpu: bool = False,
         min_confidence: float = 0.5,
         disable_llm_fallback: bool = False,
-        use_structure: bool = False,
+        use_structure: bool = True,
         structure_config: dict = None,
         **kwargs,
     ) -> str:
@@ -93,12 +207,12 @@ class OcrImageLoader(LoaderInterface):
             use_gpu: Whether to use GPU for OCR (default: False)
             min_confidence: Minimum OCR confidence threshold (default: 0.5)
             disable_llm_fallback: Disable LLM vision fallback for testing (default: False)
-            use_structure: Whether to use PPStructureV3 for layout-aware OCR (default: False)
+            use_structure: Whether to use PPStructureV3 for layout-aware OCR (default: True)
             structure_config: Optional configuration dict for PPStructureV3 (default: None)
             **kwargs: Additional arguments
 
         Returns:
-            Path to stored file with OCR-extracted text
+            Path to stored JSON file with OCR-extracted text and metadata
 
         Raises:
             ImportError: If PaddleOCR not installed
@@ -110,16 +224,15 @@ class OcrImageLoader(LoaderInterface):
             # Check if PaddleOCR is available
             if not is_paddleocr_available():
                 raise ImportError(
-                    "PaddleOCR is required for image OCR. "
-                    "Install with: pip install cognee[ocr]"
+                    "PaddleOCR is required for image OCR. Install with: pip install cognee[ocr]"
                 )
 
             logger.info(f"Processing image with OCR: {file_path}")
 
             with open(file_path, "rb") as file:
                 file_metadata = await get_file_metadata(file)
-                # Name file based on hash with OCR prefix
-                storage_file_name = "ocr_text_" + file_metadata["content_hash"] + ".txt"
+                # Name file based on hash with OCR prefix - now using .json extension
+                storage_file_name = "ocr_" + file_metadata["content_hash"] + ".json"
 
                 # Initialize OCR adapter
                 ocr_adapter = PaddleOCRAdapter(
@@ -133,10 +246,14 @@ class OcrImageLoader(LoaderInterface):
                 # Process image with OCR
                 page_result = await ocr_adapter.process_image(file_path, page_number=1)
 
-                # Format result
-                full_content = self._format_ocr_result(page_result, file_metadata)
+                # Build structured output
+                ocr_output = self._build_ocr_output(
+                    page_result,
+                    file_metadata,
+                    use_structure=use_structure,
+                )
 
-                if not full_content.strip():
+                if not ocr_output["plain_text"].strip():
                     if disable_llm_fallback:
                         # Return empty string for testing purposes
                         logger.info(
@@ -152,16 +269,16 @@ class OcrImageLoader(LoaderInterface):
                         )
                         return await self._fallback_to_image_loader(file_path)
 
-                # Store result
+                # Store result as JSON
                 storage_config = get_storage_config()
                 data_root_directory = storage_config["data_root_directory"]
                 storage = get_file_storage(data_root_directory)
 
+                full_content = json.dumps(ocr_output, indent=2, ensure_ascii=False)
                 full_file_path = await storage.store(storage_file_name, full_content)
 
                 logger.info(
-                    f"Successfully processed image with OCR: "
-                    f"{file_path} -> {full_file_path}"
+                    f"Successfully processed image with OCR: {file_path} -> {full_file_path}"
                 )
                 return full_file_path
 
